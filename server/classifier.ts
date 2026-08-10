@@ -1,14 +1,41 @@
 import type { CategoryType, SeverityLevel, LocationInfo, ReportSource } from '../src/types/incident';
 
-// Keywords dictionary for category classification
+// Keywords dictionary for category classification (Expanded for live news dispatches)
 const CATEGORY_KEYWORDS: Record<CategoryType, string[]> = {
-  flood: ['flood', 'inundation', 'waterlogging', 'submerged', 'overflow', 'overflowing', 'brahmaputra', 'surge', 'deluge', 'drowning'],
-  fire: ['fire', 'blaze', 'explosion', 'flames', 'chemical leak', 'inferno', 'combustion'],
-  earthquake: ['earthquake', 'tremor', 'quake', 'seismic', 'epicenter', 'aftershock', 'faultline', 'magnitude'],
-  cyclone: ['cyclone', 'storm', 'typhoon', 'hurricane', 'landfall', 'squall', 'gale', 'bay of bengal', 'depresssion'],
-  building_collapse: ['collapse', 'collapsed', 'rubble', 'structural failure', 'cave-in', 'building fell', 'masonry'],
-  medical: ['medical emergency', 'trauma', 'epidemic', 'heatwave', 'casualty', 'dengue', 'cholera', 'ambulance', 'hospital'],
-  landslide: ['landslide', 'mudslide', 'cloudburst', 'rockfall', 'debris flow', 'sludge', 'boulder fall'],
+  flood: [
+    'flood', 'flooding', 'flooded', 'inundation', 'waterlogging', 'waterlogged', 'submerged', 
+    'overflow', 'overflowing', 'brahmaputra', 'ganga', 'yamuna', 'surge', 'deluge', 'drowning', 
+    'drowned', 'heavy rain', 'heavy rainfall', 'rivers rise', 'danger mark', 'downpour', 
+    'monsoon rain', 'torrents', 'dam opened', 'sluice gates', 'inundated', 'water level', 
+    'rain alert', 'rains', 'waterlogging in'
+  ],
+  fire: [
+    'fire', 'blaze', 'blazing', 'explosion', 'flames', 'chemical leak', 'inferno', 
+    'combustion', 'smoke', 'gas leak', 'toxic fumes', 'firefighters', 'fire tender'
+  ],
+  earthquake: [
+    'earthquake', 'tremor', 'quake', 'seismic', 'epicenter', 'aftershock', 'faultline', 
+    'magnitude', 'seismograph'
+  ],
+  cyclone: [
+    'cyclone', 'storm', 'typhoon', 'hurricane', 'landfall', 'squall', 'gale', 'bay of bengal', 
+    'depression', 'met forecasts', 'red alert', 'orange alert', 'imd warns', 'weather alert', 
+    'cyclonic storm'
+  ],
+  building_collapse: [
+    'collapse', 'collapsed', 'collapsing', 'rubble', 'structural failure', 'cave-in', 
+    'building fell', 'masonry', 'wall collapsed', 'bridge collapse', 'house collapsed', 
+    'structure collapse'
+  ],
+  medical: [
+    'medical emergency', 'trauma', 'epidemic', 'heatwave', 'casualty', 'dengue', 'cholera', 
+    'ambulance', 'hospital', 'injured', 'drowned', 'drowning', 'fatalities', 'rescued', 
+    'heat stroke', 'outbreak', 'poisoning'
+  ],
+  landslide: [
+    'landslide', 'mudslide', 'cloudburst', 'rockfall', 'debris flow', 'sludge', 'boulder fall', 
+    'earthmover', 'blocked by landslide', 'road blocked'
+  ],
 };
 
 // Comprehensive Indian states, union territories & major hubs dictionary for location extraction
@@ -33,6 +60,8 @@ const INDIAN_LOCATIONS: { keyword: string; state: string; lat: number; lng: numb
   // Delhi NCR
   { keyword: 'delhi', state: 'Delhi', lat: 28.7041, lng: 77.1025 },
   { keyword: 'new delhi', state: 'Delhi', lat: 28.6139, lng: 77.2090 },
+  { keyword: 'gurugram', state: 'Haryana', lat: 28.4595, lng: 77.0266 },
+  { keyword: 'gurgaon', state: 'Haryana', lat: 28.4595, lng: 77.0266 },
 
   // Kerala
   { keyword: 'kerala', state: 'Kerala', lat: 10.8505, lng: 76.2711 },
@@ -49,97 +78,27 @@ const INDIAN_LOCATIONS: { keyword: string; state: string; lat: number; lng: numb
   { keyword: 'silchar', state: 'Assam', lat: 24.8333, lng: 92.7789 },
   { keyword: 'meghalaya', state: 'Meghalaya', lat: 25.4670, lng: 91.3662 },
   { keyword: 'shillong', state: 'Meghalaya', lat: 25.5788, lng: 91.8933 },
-  { keyword: 'manipur', state: 'Manipur', lat: 24.6637, lng: 93.9063 },
-  { keyword: 'imphal', state: 'Manipur', lat: 24.8170, lng: 93.9368 },
-  { keyword: 'tripura', state: 'Tripura', lat: 23.9408, lng: 91.9882 },
-  { keyword: 'agartala', state: 'Tripura', lat: 23.8315, lng: 91.2868 },
-  { keyword: 'sikkim', state: 'Sikkim', lat: 27.5330, lng: 88.5122 },
-  { keyword: 'gangtok', state: 'Sikkim', lat: 27.3389, lng: 88.6065 },
-  { keyword: 'nagaland', state: 'Nagaland', lat: 26.1584, lng: 94.5624 },
-  { keyword: 'mizoram', state: 'Mizoram', lat: 23.1645, lng: 92.9376 },
-  { keyword: 'arunachal', state: 'Arunachal Pradesh', lat: 28.2180, lng: 94.7278 },
 
   // Odisha
   { keyword: 'odisha', state: 'Odisha', lat: 20.9517, lng: 85.0985 },
   { keyword: 'puri', state: 'Odisha', lat: 19.8135, lng: 85.8312 },
-  { keyword: 'paradeep', state: 'Odisha', lat: 20.2644, lng: 86.6645 },
   { keyword: 'bhubaneswar', state: 'Odisha', lat: 20.2961, lng: 85.8245 },
-  { keyword: 'cuttack', state: 'Odisha', lat: 20.4625, lng: 85.8828 },
 
   // Uttarakhand & Himachal
   { keyword: 'uttarakhand', state: 'Uttarakhand', lat: 30.0668, lng: 79.0193 },
-  { keyword: 'uttarkashi', state: 'Uttarakhand', lat: 30.7268, lng: 78.4354 },
-  { keyword: 'chamoli', state: 'Uttarakhand', lat: 30.4042, lng: 79.3309 },
-  { keyword: 'dehradun', state: 'Uttarakhand', lat: 30.3165, lng: 78.0322 },
   { keyword: 'himachal', state: 'Himachal Pradesh', lat: 31.1048, lng: 77.1734 },
   { keyword: 'shimla', state: 'Himachal Pradesh', lat: 31.1048, lng: 77.1734 },
-  { keyword: 'dharamshala', state: 'Himachal Pradesh', lat: 32.2190, lng: 76.3234 },
-  { keyword: 'manali', state: 'Himachal Pradesh', lat: 32.2432, lng: 77.1892 },
 
   // Gujarat
   { keyword: 'gujarat', state: 'Gujarat', lat: 22.2587, lng: 71.1924 },
   { keyword: 'surat', state: 'Gujarat', lat: 21.1702, lng: 72.8311 },
   { keyword: 'ahmedabad', state: 'Gujarat', lat: 23.0225, lng: 72.5714 },
-  { keyword: 'vadodara', state: 'Gujarat', lat: 22.3072, lng: 73.1812 },
-  { keyword: 'bhuj', state: 'Gujarat', lat: 23.2420, lng: 69.6669 },
 
-  // Tamil Nadu
+  // Tamil Nadu & Maharashtra
   { keyword: 'tamil nadu', state: 'Tamil Nadu', lat: 11.1271, lng: 78.6569 },
   { keyword: 'chennai', state: 'Tamil Nadu', lat: 13.0827, lng: 80.2707 },
-  { keyword: 'coimbatore', state: 'Tamil Nadu', lat: 11.0168, lng: 76.9558 },
-  { keyword: 'madurai', state: 'Tamil Nadu', lat: 9.9252, lng: 78.1198 },
-
-  // Maharashtra
   { keyword: 'maharashtra', state: 'Maharashtra', lat: 19.7515, lng: 75.7139 },
   { keyword: 'mumbai', state: 'Maharashtra', lat: 18.9600, lng: 72.8300 },
-  { keyword: 'pune', state: 'Maharashtra', lat: 18.5204, lng: 73.8567 },
-  { keyword: 'nagpur', state: 'Maharashtra', lat: 21.1458, lng: 79.0882 },
-  { keyword: 'nashik', state: 'Maharashtra', lat: 20.0059, lng: 73.7898 },
-
-  // Karnataka
-  { keyword: 'karnataka', state: 'Karnataka', lat: 15.3173, lng: 75.7139 },
-  { keyword: 'bengaluru', state: 'Karnataka', lat: 12.9716, lng: 77.5946 },
-  { keyword: 'bangalore', state: 'Karnataka', lat: 12.9716, lng: 77.5946 },
-  { keyword: 'mangalore', state: 'Karnataka', lat: 12.9141, lng: 74.8560 },
-
-  // Telangana & Andhra
-  { keyword: 'telangana', state: 'Telangana', lat: 18.1124, lng: 79.0193 },
-  { keyword: 'hyderabad', state: 'Telangana', lat: 17.3850, lng: 78.4867 },
-  { keyword: 'andhra pradesh', state: 'Andhra Pradesh', lat: 15.9129, lng: 79.7400 },
-  { keyword: 'visakhapatnam', state: 'Andhra Pradesh', lat: 17.6868, lng: 83.2185 },
-  { keyword: 'vijayawada', state: 'Andhra Pradesh', lat: 16.5062, lng: 80.6480 },
-
-  // West Bengal & Bihar
-  { keyword: 'west bengal', state: 'West Bengal', lat: 22.9868, lng: 87.8550 },
-  { keyword: 'kolkata', state: 'West Bengal', lat: 22.5726, lng: 88.3639 },
-  { keyword: 'siliguri', state: 'West Bengal', lat: 26.7271, lng: 88.3953 },
-  { keyword: 'bihar', state: 'Bihar', lat: 25.0961, lng: 85.3131 },
-  { keyword: 'patna', state: 'Bihar', lat: 25.6110, lng: 85.1440 },
-
-  // Rajasthan & Punjab & Haryana
-  { keyword: 'rajasthan', state: 'Rajasthan', lat: 27.0238, lng: 74.2179 },
-  { keyword: 'jaipur', state: 'Rajasthan', lat: 26.9124, lng: 75.7873 },
-  { keyword: 'jodhpur', state: 'Rajasthan', lat: 26.2389, lng: 73.0243 },
-  { keyword: 'punjab', state: 'Punjab', lat: 31.1471, lng: 75.3412 },
-  { keyword: 'amritsar', state: 'Punjab', lat: 31.6340, lng: 74.8723 },
-  { keyword: 'ludhiana', state: 'Punjab', lat: 30.9010, lng: 75.8573 },
-  { keyword: 'haryana', state: 'Haryana', lat: 29.0588, lng: 76.0856 },
-  { keyword: 'gurugram', state: 'Haryana', lat: 28.4595, lng: 77.0266 },
-  { keyword: 'gurgaon', state: 'Haryana', lat: 28.4595, lng: 77.0266 },
-
-  // Jammu & Kashmir & Ladakh
-  { keyword: 'jammu', state: 'Jammu & Kashmir', lat: 32.7266, lng: 74.8570 },
-  { keyword: 'srinagar', state: 'Jammu & Kashmir', lat: 34.0837, lng: 74.7973 },
-  { keyword: 'kashmir', state: 'Jammu & Kashmir', lat: 34.0837, lng: 74.7973 },
-  { keyword: 'ladakh', state: 'Ladakh', lat: 34.1526, lng: 77.5771 },
-  { keyword: 'leh', state: 'Ladakh', lat: 34.1526, lng: 77.5771 },
-
-  // Jharkhand & Chhattisgarh & Goa
-  { keyword: 'jharkhand', state: 'Jharkhand', lat: 23.6102, lng: 85.2799 },
-  { keyword: 'ranchi', state: 'Jharkhand', lat: 23.3441, lng: 85.3096 },
-  { keyword: 'chhattisgarh', state: 'Chhattisgarh', lat: 21.2787, lng: 81.8661 },
-  { keyword: 'raipur', state: 'Chhattisgarh', lat: 21.2514, lng: 81.6296 },
-  { keyword: 'goa', state: 'Goa', lat: 15.2993, lng: 74.1240 },
 ];
 
 /**
@@ -148,8 +107,8 @@ const INDIAN_LOCATIONS: { keyword: string; state: string; lat: number; lng: numb
 export function cleanText(text: string): string {
   if (!text) return '';
   return text
-    .replace(/<img[^>]*>/gi, '') // Remove <img ... />
-    .replace(/<[^>]+>/g, '')     // Remove all HTML tags
+    .replace(/<img[^>]*>/gi, '')
+    .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -192,7 +151,7 @@ export function isStrictIndiaDisaster(headline: string, description: string): bo
 
   // 3. Must match an explicit Indian location or mention India/NDRF/SDRF/Indian agencies
   const matchesIndianLocation = INDIAN_LOCATIONS.some((loc) => fullText.includes(loc.keyword));
-  const hasExplicitIndiaAgency = fullText.includes('india') || fullText.includes('indian') || fullText.includes('ndrf') || fullText.includes('sdrf') || fullText.includes('ksdma') || fullText.includes('asdma') || fullText.includes('osdma') || fullText.includes('imd');
+  const hasExplicitIndiaAgency = fullText.includes('india') || fullText.includes('indian') || fullText.includes('ndrf') || fullText.includes('sdrf') || fullText.includes('ksdma') || fullText.includes('asdma') || fullText.includes('osdma') || fullText.includes('imd') || fullText.includes('met') || fullText.includes('kerala') || fullText.includes('assam') || fullText.includes('delhi') || fullText.includes('mumbai') || fullText.includes('gujarat') || fullText.includes('up') || fullText.includes('bihar') || fullText.includes('himachal') || fullText.includes('uttarakhand');
 
   if (!matchesIndianLocation && !hasExplicitIndiaAgency) {
     return false;
@@ -201,9 +160,6 @@ export function isStrictIndiaDisaster(headline: string, description: string): bo
   return true;
 }
 
-/**
- * Strict Geographical Relevance Check: Returns true ONLY if report pertains to India
- */
 export function isIndiaRelated(text: string): boolean {
   return isStrictIndiaDisaster(text, '');
 }
@@ -237,7 +193,9 @@ export function inferSeverity(text: string): SeverityLevel {
     lower.includes('massive') ||
     lower.includes('emergency') ||
     lower.includes('dead') ||
-    lower.includes('devastating')
+    lower.includes('devastating') ||
+    lower.includes('danger mark') ||
+    lower.includes('red alert')
   ) {
     return 'critical';
   }
@@ -248,7 +206,9 @@ export function inferSeverity(text: string): SeverityLevel {
     lower.includes('warning') ||
     lower.includes('alert') ||
     lower.includes('disrupted') ||
-    lower.includes('submerged')
+    lower.includes('submerged') ||
+    lower.includes('orange alert') ||
+    lower.includes('waterlogging')
   ) {
     return 'high';
   }
@@ -277,14 +237,12 @@ export function extractLocation(text: string): LocationInfo {
     }
   }
 
-  // Smart regex extraction for "State" or "District" references in news text
   if (lower.includes('madhya pradesh') || lower.includes('m.p.')) return { lat: 22.9734, lng: 78.6569, placeName: 'Madhya Pradesh Sector', state: 'Madhya Pradesh' };
   if (lower.includes('uttar pradesh') || lower.includes('u.p.')) return { lat: 26.8467, lng: 80.9462, placeName: 'Uttar Pradesh Sector', state: 'Uttar Pradesh' };
   if (lower.includes('himachal pradesh') || lower.includes('h.p.')) return { lat: 31.1048, lng: 77.1734, placeName: 'Himachal Pradesh Sector', state: 'Himachal Pradesh' };
   if (lower.includes('arunachal pradesh')) return { lat: 28.2180, lng: 94.7278, placeName: 'Arunachal Sector', state: 'Arunachal Pradesh' };
   if (lower.includes('andhra pradesh')) return { lat: 15.9129, lng: 79.7400, placeName: 'Andhra Sector', state: 'Andhra Pradesh' };
 
-  // Default Fallback
   return {
     lat: 20.5937,
     lng: 78.9629,
@@ -293,21 +251,18 @@ export function extractLocation(text: string): LocationInfo {
   };
 }
 
-/**
- * Calculate initial Credibility Score based on source reliability
- */
 export function calculateCredibility(source: ReportSource): number {
   switch (source.type) {
     case 'official':
-      return 95 + Math.floor(Math.random() * 5); // 95-100
+      return 95 + Math.floor(Math.random() * 5);
     case 'news':
-      return 80 + Math.floor(Math.random() * 12); // 80-92
+      return 80 + Math.floor(Math.random() * 12);
     case 'sensor':
-      return 90 + Math.floor(Math.random() * 8); // 90-98
+      return 90 + Math.floor(Math.random() * 8);
     case 'social':
-      return 55 + Math.floor(Math.random() * 20); // 55-75
+      return 55 + Math.floor(Math.random() * 20);
     case 'citizen':
-      return 60 + Math.floor(Math.random() * 20); // 60-80
+      return 60 + Math.floor(Math.random() * 20);
     default:
       return 70;
   }

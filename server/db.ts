@@ -32,7 +32,8 @@ db.exec(`
     affectedPopulationEstimate INTEGER,
     casualtyEstimate INTEGER,
     actionRequired TEXT,
-    imageUrl TEXT
+    imageUrl TEXT,
+    classificationMethod TEXT
   );
 
   CREATE TABLE IF NOT EXISTS clusters (
@@ -59,6 +60,25 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_reports_cluster ON reports(clusterId);
 `);
 
+// Safe column migrations for existing SQLite databases
+try {
+  db.exec(`ALTER TABLE clusters ADD COLUMN representativeReportId TEXT;`);
+} catch (e) {
+  // Column already exists
+}
+
+try {
+  db.exec(`ALTER TABLE clusters ADD COLUMN historyJSON TEXT;`);
+} catch (e) {
+  // Column already exists
+}
+
+try {
+  db.exec(`ALTER TABLE reports ADD COLUMN classificationMethod TEXT;`);
+} catch (e) {
+  // Column already exists
+}
+
 /**
  * Upsert a report into SQLite
  */
@@ -68,18 +88,19 @@ export function insertReport(report: DisasterReport): void {
       id, category, severity, placeName, district, state, lat, lng,
       headline, description, sourceType, sourceName, sourceVerified,
       credibilityScore, language, timestamp, clusterId,
-      affectedPopulationEstimate, casualtyEstimate, actionRequired, imageUrl
+      affectedPopulationEstimate, casualtyEstimate, actionRequired, imageUrl, classificationMethod
     ) VALUES (
       ?, ?, ?, ?, ?, ?, ?, ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
-      ?, ?, ?, ?
+      ?, ?, ?, ?, ?
     ) ON CONFLICT(id) DO UPDATE SET
       severity = excluded.severity,
       headline = excluded.headline,
       description = excluded.description,
       credibilityScore = excluded.credibilityScore,
-      timestamp = excluded.timestamp
+      timestamp = excluded.timestamp,
+      classificationMethod = excluded.classificationMethod
   `);
 
   stmt.run(
@@ -103,7 +124,8 @@ export function insertReport(report: DisasterReport): void {
     report.affectedPopulationEstimate || null,
     report.casualtyEstimate || null,
     report.actionRequired || null,
-    report.imageUrl || null
+    report.imageUrl || null,
+    report.classificationMethod || 'keyword-fallback'
   );
 }
 
@@ -140,6 +162,7 @@ export function queryReports(): DisasterReport[] {
     casualtyEstimate: row.casualtyEstimate || undefined,
     actionRequired: row.actionRequired || undefined,
     imageUrl: row.imageUrl || undefined,
+    classificationMethod: row.classificationMethod || 'keyword-fallback',
   }));
 }
 

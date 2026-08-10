@@ -17,15 +17,16 @@ export async function fetchLiveClientTelemetry(): Promise<DisasterReport[]> {
 
   const results: DisasterReport[] = [];
 
-  // Concurrently fetch USGS, NASA EONET, UN ReliefWeb, and Live RSS Feeds
-  const [usgsReports, eonetReports, reliefWebReports, rssReports] = await Promise.all([
+  // Concurrently fetch USGS, NASA EONET, UN ReliefWeb, NewsAPI/GNews (if keys present) & Live RSS Feeds
+  const [usgsReports, eonetReports, reliefWebReports, rssReports, gnewsReports] = await Promise.all([
     fetchUSGSClient(),
     fetchEONETClient(),
     fetchReliefWebClient(),
     fetchRSSClient(),
+    fetchGNewsClient(),
   ]);
 
-  results.push(...usgsReports, ...eonetReports, ...reliefWebReports, ...rssReports);
+  results.push(...usgsReports, ...eonetReports, ...reliefWebReports, ...rssReports, ...gnewsReports);
 
   console.log(`[Live Client Telemetry] 📥 Ingested ${results.length} live real-time dispatches from open APIs.`);
   return results;
@@ -53,7 +54,6 @@ async function fetchUSGSClient(): Promise<DisasterReport[]> {
       const mag = feat.properties?.mag || 0;
       const time = feat.properties?.time ? new Date(feat.properties.time).toISOString() : new Date().toISOString();
 
-      // Filter for India / South Asia region (Lat 5..38, Lng 65..98) or major events
       const isSouthAsia = lat >= 5 && lat <= 38 && lng >= 65 && lng <= 98;
       if (!isSouthAsia && mag < 4.5) continue;
 
@@ -214,13 +214,73 @@ async function fetchReliefWebClient(): Promise<DisasterReport[]> {
 }
 
 /**
- * 4. Live Indian News RSS Feeds via CORS Proxy
+ * 4. GNews Client Fetch (if VITE_GNEWS_KEY present)
+ */
+async function fetchGNewsClient(): Promise<DisasterReport[]> {
+  const apiKey = import.meta.env.VITE_GNEWS_KEY || '1866b0c31d95e5e2e27ba553068a7c46';
+  if (!apiKey) return [];
+
+  try {
+    const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue) India');
+    const res = await fetch(`https://gnews.io/api/v4/search?q=${query}&lang=en&country=in&max=15&apikey=${apiKey}`);
+    if (!res.ok) return [];
+
+    const data = await res.json();
+    const articles = data.articles || [];
+    const reports: DisasterReport[] = [];
+
+    for (const art of articles) {
+      if (!art.title) continue;
+
+      const title = cleanText(art.title);
+      const desc = cleanText(art.description || title);
+      const fullText = `${title} ${desc}`;
+
+      if (!isStrictIndiaDisaster(title, desc)) continue;
+
+      const category = classifyCategory(fullText) || 'flood';
+      const loc = extractLocation(fullText);
+      const time = art.publishedAt ? new Date(art.publishedAt).toISOString() : new Date().toISOString();
+
+      reports.push({
+        id: `client-gnews-${Math.random().toString(36).substr(2, 9)}`,
+        clusterId: `cluster-gnews-${Math.random().toString(36).substr(2, 9)}`,
+        category,
+        severity: inferSeverity(fullText),
+        location: loc,
+        headline: title,
+        description: desc.slice(0, 280),
+        source: {
+          type: 'news',
+          name: art.source?.name || 'GNews Source',
+          verified: true,
+          handleOrUrl: art.url,
+        },
+        credibilityScore: 92,
+        language: 'en',
+        timestamp: time,
+        imageUrl: art.image || undefined,
+      });
+    }
+
+    return reports;
+  } catch (err) {
+    console.warn('[Live Client Telemetry] GNews fetch warning:', err);
+    return [];
+  }
+}
+
+/**
+ * 5. Live Indian News RSS Feeds via CORS Proxy
  */
 async function fetchRSSClient(): Promise<DisasterReport[]> {
   const rssUrls = [
     { url: 'https://www.thehindu.com/news/national/feeder/default.rss', name: 'The Hindu National' },
-    { url: 'https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms', name: 'Times of India' },
-    { url: 'https://feeds.feedburner.com/ndtvnews-india-news', name: 'NDTV India Feed' },
+    { url: 'https://www.thehindu.com/news/states/feeder/default.rss', name: 'The Hindu States' },
+    { url: 'https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms', name: 'Times of India India' },
+    { url: 'https://timesofindia.indiatimes.com/rssfeeds/2647163.cms', name: 'Times of India Environment' },
+    { url: 'https://feeds.feedburner.com/ndtvnews-india-news', name: 'NDTV India' },
+    { url: 'https://indianexpress.com/section/india/feed/', name: 'Indian Express' },
   ];
 
   const reports: DisasterReport[] = [];
@@ -234,7 +294,7 @@ async function fetchRSSClient(): Promise<DisasterReport[]> {
       const xmlText = await res.text();
       const parser = new DOMParser();
       const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-      const items = Array.from(xmlDoc.querySelectorAll('item')).slice(0, 10);
+      const items = Array.from(xmlDoc.querySelectorAll('item')).slice(0, 15);
 
       for (const item of items) {
         const title = cleanText(item.querySelector('title')?.textContent || '');

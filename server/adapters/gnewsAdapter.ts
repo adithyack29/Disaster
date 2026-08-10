@@ -4,12 +4,12 @@ import { calculateCredibility, inferSeverity, extractLocation, classifyCategory 
 export async function fetchGNewsReports(): Promise<DisasterReport[]> {
   const apiKey = process.env.GNEWS_KEY;
   if (!apiKey || apiKey.trim() === '') {
-    // Graceful fallback if key not configured
     return [];
   }
 
   try {
-    const url = `https://gnews.io/api/v4/search?q=disaster+India&lang=en&country=in&max=15&apikey=${apiKey}`;
+    const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue) India');
+    const url = `https://gnews.io/api/v4/search?q=${query}&lang=en&country=in&max=20&apikey=${apiKey}`;
     const response = await fetch(url);
     if (!response.ok) return [];
 

@@ -9,11 +9,15 @@ const parser = new Parser({
   },
 });
 
-// Reliable public Indian disaster & news RSS feeds
+// Comprehensive list of reliable public Indian disaster & news RSS feeds
 const RSS_FEEDS = [
-  { url: 'https://timesofindia.indiatimes.com/rssfeeds/296589292.cms', name: 'Times of India India News' },
-  { url: 'https://feeds.feedburner.com/ndtvnews-india-news', name: 'NDTV India Feed' },
   { url: 'https://www.thehindu.com/news/national/feeder/default.rss', name: 'The Hindu National' },
+  { url: 'https://www.thehindu.com/news/states/feeder/default.rss', name: 'The Hindu States' },
+  { url: 'https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms', name: 'Times of India India' },
+  { url: 'https://timesofindia.indiatimes.com/rssfeeds/2647163.cms', name: 'Times of India Environment' },
+  { url: 'https://feeds.feedburner.com/ndtvnews-india-news', name: 'NDTV India' },
+  { url: 'https://feeds.feedburner.com/ndtvnews-latest', name: 'NDTV Latest' },
+  { url: 'https://indianexpress.com/section/india/feed/', name: 'Indian Express' },
 ];
 
 export async function fetchRSSReports(): Promise<DisasterReport[]> {
@@ -23,7 +27,7 @@ export async function fetchRSSReports(): Promise<DisasterReport[]> {
     try {
       const feed = await parser.parseURL(feedConfig.url);
 
-      for (const item of (feed.items || []).slice(0, 15)) {
+      for (const item of (feed.items || []).slice(0, 30)) {
         const rawTitle = item.title || '';
         const rawContent = item.contentSnippet || item.content || rawTitle;
 
@@ -32,7 +36,7 @@ export async function fetchRSSReports(): Promise<DisasterReport[]> {
 
         // Strict Disaster & India Relevance Filter
         if (!isStrictIndiaDisaster(title, content)) {
-          continue; // Skip non-disaster / foreign items
+          continue;
         }
 
         const category = classifyCategory(`${title} ${content}`);
@@ -42,8 +46,8 @@ export async function fetchRSSReports(): Promise<DisasterReport[]> {
         const time = item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString();
 
         reports.push({
-          id: `rss-${item.guid || item.link || Math.random()}`,
-          clusterId: `cluster-rss-${item.guid || Math.random()}`,
+          id: `rss-${Buffer.from(item.link || title).toString('hex').slice(0, 16)}`,
+          clusterId: `cluster-rss-${Buffer.from(title).toString('hex').slice(0, 16)}`,
           category,
           severity: inferSeverity(`${title} ${content}`),
           location: loc,

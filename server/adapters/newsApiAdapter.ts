@@ -4,12 +4,12 @@ import { calculateCredibility, inferSeverity, extractLocation, classifyCategory 
 export async function fetchNewsAPIReports(): Promise<DisasterReport[]> {
   const apiKey = process.env.NEWSAPI_KEY;
   if (!apiKey || apiKey.trim() === '') {
-    // Graceful fallback if key not configured
     return [];
   }
 
   try {
-    const url = `https://newsapi.org/v2/everything?q=disaster+AND+India&sortBy=publishedAt&pageSize=20&apiKey=${apiKey}`;
+    const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue OR inundation) India');
+    const url = `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=30&apiKey=${apiKey}`;
     const response = await fetch(url);
     if (!response.ok) return [];
 
