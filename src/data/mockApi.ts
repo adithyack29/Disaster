@@ -6,12 +6,18 @@ import type {
   PulseBucket, 
   SeverityLevel 
 } from '../types/incident';
-import { INITIAL_MOCK_REPORTS } from './mockReports';
+import { getFreshMockReports } from './mockReports';
 import { performSmartClustering } from '../lib/clustering';
+import { isStrictIndiaDisaster } from '../../server/classifier';
 
 const API_BASE_URL = 'http://127.0.0.1:3001/api';
 
-let localReports: DisasterReport[] = [...INITIAL_MOCK_REPORTS];
+/**
+ * Returns fresh mock reports with relative timestamps evaluated live against current Date.now()
+ */
+function getFreshLocalReports(): DisasterReport[] {
+  return getFreshMockReports().filter((r) => isStrictIndiaDisaster(r.headline, r.description));
+}
 
 export function applyFilters(reports: DisasterReport[], filters?: FilterState): DisasterReport[] {
   if (!filters) return reports;
@@ -60,7 +66,7 @@ export function applyFilters(reports: DisasterReport[], filters?: FilterState): 
 }
 
 /**
- * Fetch reports from Node.js backend (/api/reports)
+ * Fetch reports from Node.js backend (/api/reports) with dynamic live fallback
  */
 export async function getReports(filters?: FilterState): Promise<DisasterReport[]> {
   try {
@@ -92,10 +98,11 @@ export async function getReports(filters?: FilterState): Promise<DisasterReport[
       }
     }
   } catch (err) {
-    // Fall back to local array if backend is unavailable
+    // Fall back to fresh local reports if backend is unavailable
   }
 
-  return applyFilters(localReports, filters);
+  const reports = getFreshLocalReports();
+  return applyFilters(reports, filters);
 }
 
 /**
@@ -111,8 +118,9 @@ export async function getIncidentById(id: string): Promise<DisasterReport | null
     // Fall back
   }
 
-  const report = localReports.find((r) => r.id === id);
-  return report || null;
+  const reports = getFreshLocalReports();
+  const found = reports.find((r) => r.id === id);
+  return found || null;
 }
 
 /**
@@ -128,7 +136,8 @@ export async function getClusterById(clusterId: string): Promise<IncidentCluster
     // Fall back
   }
 
-  const reports = localReports.filter((r) => r.clusterId === clusterId);
+  const freshReports = getFreshLocalReports();
+  const reports = freshReports.filter((r) => r.clusterId === clusterId);
   if (reports.length === 0) return null;
   const clusters = performSmartClustering(reports);
   return clusters.length > 0 ? clusters[0] : null;
@@ -147,7 +156,7 @@ export async function getStats(filters?: FilterState): Promise<DashboardStats> {
     // Fall back
   }
 
-  const filtered = applyFilters(localReports, filters);
+  const filtered = applyFilters(getFreshLocalReports(), filters);
   const nowMs = Date.now();
   const oneHourAgo = nowMs - 3600 * 1000;
 
@@ -169,7 +178,7 @@ export async function getStats(filters?: FilterState): Promise<DashboardStats> {
 }
 
 export async function getPulseTimeline(filters?: FilterState): Promise<PulseBucket[]> {
-  const filtered = applyFilters(localReports, filters);
+  const filtered = applyFilters(getFreshLocalReports(), filters);
   const nowMs = Date.now();
   const buckets: PulseBucket[] = [];
 
@@ -217,5 +226,7 @@ export async function getPulseTimeline(filters?: FilterState): Promise<PulseBuck
 }
 
 export function pushLiveReport(report: DisasterReport): void {
-  localReports = [report, ...localReports];
+  // Push live telemetry report into local session stream
+  const fresh = getFreshLocalReports();
+  fresh.unshift(report);
 }
