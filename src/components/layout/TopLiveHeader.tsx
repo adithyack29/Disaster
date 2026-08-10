@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { RefreshCw, ShieldAlert, Loader2 } from 'lucide-react';
 import { useDashboardStore } from '../../store/useDashboardStore';
+import { pushLiveReport } from '../../data/mockApi';
 
 export const TopLiveHeader: React.FC = () => {
   const { triggerRefresh } = useDashboardStore();
@@ -8,11 +9,35 @@ export const TopLiveHeader: React.FC = () => {
 
   const handleManualReload = async () => {
     setIsReloading(true);
+
     try {
       await fetch('http://127.0.0.1:3001/api/pipeline/run', { method: 'POST' });
     } catch (err) {
       console.warn('Backend reload warning:', err);
     } finally {
+      // Simulate live incoming report dispatch on client side
+      pushLiveReport({
+        id: `rep-live-${Date.now()}`,
+        clusterId: 'cluster-kerala-kochi-01',
+        category: 'flood',
+        severity: 'critical',
+        location: {
+          lat: 9.9312,
+          lng: 76.2673,
+          placeName: 'Fort Kochi Coastal Zone',
+          district: 'Ernakulam',
+          state: 'Kerala',
+        },
+        headline: 'KSDMA Bulletin: Tidal surge reaches 1.2m depth in Fort Kochi; NDRF boats conducting evacuations',
+        description: 'Seawater inundation stabilized at 1.2m depth in Fort Kochi. Emergency power restored at General Hospital annex; NDRF 4th Battalion completing swift transport of evacuees.',
+        source: { type: 'official', name: 'Kerala State Disaster Management Authority (KSDMA)', verified: true },
+        credibilityScore: 99,
+        language: 'en',
+        timestamp: new Date().toISOString(),
+        affectedPopulationEstimate: 3400,
+        classificationMethod: 'ai',
+      });
+
       triggerRefresh();
       setTimeout(() => setIsReloading(false), 800);
     }

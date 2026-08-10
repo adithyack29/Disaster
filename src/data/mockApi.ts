@@ -12,11 +12,19 @@ import { isStrictIndiaDisaster } from '../../server/classifier';
 
 const API_BASE_URL = 'http://127.0.0.1:3001/api';
 
+let sessionPushedReports: DisasterReport[] = [];
+
 /**
- * Returns fresh mock reports with relative timestamps evaluated live against current Date.now()
+ * Returns fresh mock reports merged with live session dispatches
  */
 function getFreshLocalReports(): DisasterReport[] {
-  return getFreshMockReports().filter((r) => isStrictIndiaDisaster(r.headline, r.description));
+  const base = getFreshMockReports().filter((r) => isStrictIndiaDisaster(r.headline, r.description));
+  return [...sessionPushedReports, ...base];
+}
+
+export function pushLiveReport(report: DisasterReport): void {
+  // Unshift live report into active session array
+  sessionPushedReports = [report, ...sessionPushedReports];
 }
 
 export function applyFilters(reports: DisasterReport[], filters?: FilterState): DisasterReport[] {
@@ -223,10 +231,4 @@ export async function getPulseTimeline(filters?: FilterState): Promise<PulseBuck
   }
 
   return buckets;
-}
-
-export function pushLiveReport(report: DisasterReport): void {
-  // Push live telemetry report into local session stream
-  const fresh = getFreshLocalReports();
-  fresh.unshift(report);
 }

@@ -25,7 +25,7 @@ export function getFreshMockReports(): DisasterReport[] {
     source: { type: 'official', name: 'Kerala State Disaster Management Authority (KSDMA)', verified: true, handleOrUrl: 'https://sdma.kerala.gov.in/' },
     credibilityScore: 98,
     language: 'en',
-    timestamp: new Date(NOW - 5 * MINUTE).toISOString(),
+    timestamp: new Date(NOW - 30 * 1000).toISOString(),
     affectedPopulationEstimate: 3400,
     casualtyEstimate: 0,
     actionRequired: 'NDRF 4th Battalion deployment for water rescue boats & power generator backup.',
