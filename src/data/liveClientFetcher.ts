@@ -8,6 +8,21 @@ import {
   cleanText 
 } from '../../server/classifier';
 
+const getEnvVar = (key: string): string => {
+  try {
+    if (typeof import.meta !== 'undefined' && (import.meta as any).env && (import.meta as any).env[key]) {
+      return (import.meta as any).env[key];
+    }
+  } catch {}
+  try {
+    const proc = (globalThis as any).process;
+    if (proc && proc.env && proc.env[key]) {
+      return proc.env[key];
+    }
+  } catch {}
+  return '';
+};
+
 /**
  * Live Client Telemetry Fetcher: Fetches real-time open-source disaster & news feeds
  * directly in the browser when backend Express server is unreachable (e.g. Vercel deployment)
@@ -17,7 +32,7 @@ export async function fetchLiveClientTelemetry(): Promise<DisasterReport[]> {
 
   const results: DisasterReport[] = [];
 
-  // Concurrently fetch USGS, NASA EONET, UN ReliefWeb, NewsAPI/GNews (if keys present) & Live RSS Feeds
+  // Concurrently fetch USGS, NASA EONET, UN ReliefWeb, NewsAPI/GNews & Live RSS Feeds
   const [usgsReports, eonetReports, reliefWebReports, rssReports, gnewsReports] = await Promise.all([
     fetchUSGSClient(),
     fetchEONETClient(),
@@ -37,7 +52,12 @@ export async function fetchLiveClientTelemetry(): Promise<DisasterReport[]> {
  */
 async function fetchUSGSClient(): Promise<DisasterReport[]> {
   try {
-    const res = await fetch('https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&limit=60');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const res = await fetch('https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&limit=60', { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (!res.ok) return [];
 
     const data = await res.json();
@@ -98,7 +118,12 @@ async function fetchUSGSClient(): Promise<DisasterReport[]> {
  */
 async function fetchEONETClient(): Promise<DisasterReport[]> {
   try {
-    const res = await fetch('https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=30');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const res = await fetch('https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=30', { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (!res.ok) return [];
 
     const data = await res.json();
@@ -166,7 +191,12 @@ async function fetchEONETClient(): Promise<DisasterReport[]> {
  */
 async function fetchReliefWebClient(): Promise<DisasterReport[]> {
   try {
-    const res = await fetch('https://api.reliefweb.int/v1/reports?appname=ndrf-disaster-portal&limit=25&preset=latest');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const res = await fetch('https://api.reliefweb.int/v1/reports?appname=ndrf-disaster-portal&limit=25&preset=latest', { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (!res.ok) return [];
 
     const data = await res.json();
@@ -214,15 +244,20 @@ async function fetchReliefWebClient(): Promise<DisasterReport[]> {
 }
 
 /**
- * 4. GNews Client Fetch (if VITE_GNEWS_KEY present)
+ * 4. GNews Client Fetch
  */
 async function fetchGNewsClient(): Promise<DisasterReport[]> {
-  const apiKey = import.meta.env.VITE_GNEWS_KEY || '1866b0c31d95e5e2e27ba553068a7c46';
+  const apiKey = getEnvVar('VITE_GNEWS_KEY') || getEnvVar('GNEWS_KEY') || '1866b0c31d95e5e2e27ba553068a7c46';
   if (!apiKey) return [];
 
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
     const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue) India');
-    const res = await fetch(`https://gnews.io/api/v4/search?q=${query}&lang=en&country=in&max=15&apikey=${apiKey}`);
+    const res = await fetch(`https://gnews.io/api/v4/search?q=${query}&lang=en&country=in&max=15&apikey=${apiKey}`, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (!res.ok) return [];
 
     const data = await res.json();
@@ -271,7 +306,7 @@ async function fetchGNewsClient(): Promise<DisasterReport[]> {
 }
 
 /**
- * 5. Live Indian News RSS Feeds via CORS Proxy
+ * 5. Live Indian News RSS Feeds via Cross-Platform Regex Parsing
  */
 async function fetchRSSClient(): Promise<DisasterReport[]> {
   const rssUrls = [
@@ -287,20 +322,28 @@ async function fetchRSSClient(): Promise<DisasterReport[]> {
 
   for (const feed of rssUrls) {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
       const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(feed.url)}`;
-      const res = await fetch(proxyUrl);
+      const res = await fetch(proxyUrl, { signal: controller.signal });
+      clearTimeout(timeoutId);
+
       if (!res.ok) continue;
 
       const xmlText = await res.text();
-      const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-      const items = Array.from(xmlDoc.querySelectorAll('item')).slice(0, 15);
+      const itemMatches = xmlText.match(/<item>[\s\S]*?<\/item>/gi) || [];
 
-      for (const item of items) {
-        const title = cleanText(item.querySelector('title')?.textContent || '');
-        const desc = cleanText(item.querySelector('description')?.textContent || title);
-        const pubDate = item.querySelector('pubDate')?.textContent;
-        const link = item.querySelector('link')?.textContent || undefined;
+      for (const itemXml of itemMatches.slice(0, 15)) {
+        const titleMatch = itemXml.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
+        const descMatch = itemXml.match(/<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
+        const pubDateMatch = itemXml.match(/<pubDate>([\s\S]*?)<\/pubDate>/i);
+        const linkMatch = itemXml.match(/<link>([\s\S]*?)<\/link>/i);
+
+        const title = cleanText(titleMatch ? titleMatch[1] : '');
+        const desc = cleanText(descMatch ? descMatch[1] : title);
+        const pubDate = pubDateMatch ? pubDateMatch[1].trim() : undefined;
+        const link = linkMatch ? linkMatch[1].trim() : undefined;
 
         if (!isStrictIndiaDisaster(title, desc)) continue;
 
