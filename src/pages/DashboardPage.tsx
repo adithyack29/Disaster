@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { IncidentCluster } from '../types/incident';
-import { getReports } from '../data/mockApi';
+import { getReports, triggerPipelineAndRefresh } from '../data/mockApi';
 import { useDashboardStore } from '../store/useDashboardStore';
 import { TopLiveHeader } from '../components/layout/TopLiveHeader';
 import { CategoryFilterBar } from '../components/filters/CategoryFilterBar';
@@ -41,7 +41,7 @@ export const DashboardPage: React.FC = () => {
     const THREE_MINUTES = 3 * 60 * 1000;
     const interval = setInterval(async () => {
       try {
-        await fetch('http://127.0.0.1:3001/api/pipeline/run', { method: 'POST' });
+        await triggerPipelineAndRefresh();
       } catch (err) {
         console.warn('Auto-reload pipeline error:', err);
       } finally {

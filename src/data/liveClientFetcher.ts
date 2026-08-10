@@ -23,41 +23,59 @@ const getEnvVar = (key: string): string => {
   return '';
 };
 
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 8000): Promise<Response> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return res;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+};
+
 /**
  * Live Client Telemetry Fetcher: Fetches real-time open-source disaster & news feeds
  * directly in the browser when backend Express server is unreachable (e.g. Vercel deployment)
  */
 export async function fetchLiveClientTelemetry(): Promise<DisasterReport[]> {
-  console.log('[Live Client Telemetry] 🌐 Fetching live real-time disaster dispatches directly in browser...');
+  console.log('[Live Client Telemetry] 🌐 Fetching live real-time disaster dispatches...');
 
   const results: DisasterReport[] = [];
 
-  // Concurrently fetch USGS, NASA EONET, UN ReliefWeb, NewsAPI/GNews & Live RSS Feeds
-  const [usgsReports, eonetReports, reliefWebReports, rssReports, gnewsReports] = await Promise.all([
+  // Run all fetches concurrently; each has its own timeout guard
+  const settled = await Promise.allSettled([
     fetchUSGSClient(),
     fetchEONETClient(),
-    fetchReliefWebClient(),
-    fetchRSSClient(),
     fetchGNewsClient(),
+    fetchRSSClient(),
   ]);
 
-  results.push(...usgsReports, ...eonetReports, ...reliefWebReports, ...rssReports, ...gnewsReports);
+  for (const s of settled) {
+    if (s.status === 'fulfilled') {
+      results.push(...s.value);
+    }
+  }
 
-  console.log(`[Live Client Telemetry] 📥 Ingested ${results.length} live real-time dispatches from open APIs.`);
+  // Sort by newest timestamp
+  results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  console.log(`[Live Client Telemetry] 📥 Ingested ${results.length} live real-time dispatches.`);
   return results;
 }
 
 /**
- * 1. USGS Seismograph Telemetry (Native Browser CORS)
+ * 1. USGS Seismograph Telemetry – CORS-accessible
  */
 async function fetchUSGSClient(): Promise<DisasterReport[]> {
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-    const res = await fetch('https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&limit=60', { signal: controller.signal });
-    clearTimeout(timeoutId);
-
+    const res = await fetchWithTimeout(
+      'https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&minmagnitude=2.5&limit=60',
+      {},
+      8000
+    );
     if (!res.ok) return [];
 
     const data = await res.json();
@@ -74,11 +92,12 @@ async function fetchUSGSClient(): Promise<DisasterReport[]> {
       const mag = feat.properties?.mag || 0;
       const time = feat.properties?.time ? new Date(feat.properties.time).toISOString() : new Date().toISOString();
 
+      // South Asia bounding box: lat 5-38, lng 65-98
       const isSouthAsia = lat >= 5 && lat <= 38 && lng >= 65 && lng <= 98;
       if (!isSouthAsia && mag < 4.5) continue;
 
       const loc = extractLocation(place);
-      const state = isSouthAsia ? (loc.state || 'India') : 'Global Alert';
+      const state = loc.state !== 'Madhya Pradesh' ? loc.state : 'India';
       const severity = mag >= 5.5 ? 'critical' : mag >= 4.0 ? 'high' : 'moderate';
 
       reports.push({
@@ -86,19 +105,10 @@ async function fetchUSGSClient(): Promise<DisasterReport[]> {
         clusterId: `cluster-usgs-${feat.id}`,
         category: 'earthquake',
         severity,
-        location: {
-          lat,
-          lng,
-          placeName: place,
-          state,
-        },
+        location: { lat, lng, placeName: place, state },
         headline: `Magnitude ${mag} Earthquake detected near ${place}`,
-        description: `Seismograph data recorded magnitude ${mag} earthquake at depth of ${coords[2] || 10}km. Automatic USGS alert generated.`,
-        source: {
-          type: 'sensor',
-          name: 'USGS Seismograph Telemetry',
-          verified: true,
-        },
+        description: `Seismograph data recorded magnitude ${mag} earthquake at depth of ${coords[2] || 10}km.`,
+        source: { type: 'sensor', name: 'USGS Seismograph Telemetry', verified: true },
         credibilityScore: calculateCredibility({ type: 'sensor', name: 'USGS', verified: true }),
         language: 'en',
         timestamp: time,
@@ -114,16 +124,11 @@ async function fetchUSGSClient(): Promise<DisasterReport[]> {
 }
 
 /**
- * 2. NASA EONET Satellite Tracker (Native Browser CORS)
+ * 2. NASA EONET Satellite Tracker – CORS-accessible
  */
 async function fetchEONETClient(): Promise<DisasterReport[]> {
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-    const res = await fetch('https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=30', { signal: controller.signal });
-    clearTimeout(timeoutId);
-
+    const res = await fetchWithTimeout('https://eonet.gsfc.nasa.gov/api/v3/events?status=open&limit=30', {}, 8000);
     if (!res.ok) return [];
 
     const data = await res.json();
@@ -161,18 +166,13 @@ async function fetchEONETClient(): Promise<DisasterReport[]> {
         category,
         severity: inferSeverity(title),
         location: {
-          lat,
-          lng,
-          placeName: loc.placeName !== 'National Coastline Zone' ? loc.placeName : title,
+          lat, lng,
+          placeName: loc.placeName !== 'Central Command Zone' ? loc.placeName : title,
           state: loc.state,
         },
         headline: title,
-        description: `NASA Earth Observatory Natural Event Tracker detected active event "${title}". Category: ${categories[0]?.title || 'Natural Disaster'}.`,
-        source: {
-          type: 'official',
-          name: 'NASA EONET Satellite Tracker',
-          verified: true,
-        },
+        description: `NASA EONET detected active event: "${title}". Category: ${categories[0]?.title || 'Natural Disaster'}.`,
+        source: { type: 'official', name: 'NASA EONET Satellite Tracker', verified: true },
         credibilityScore: calculateCredibility({ type: 'official', name: 'NASA', verified: true }),
         language: 'en',
         timestamp: time,
@@ -187,78 +187,23 @@ async function fetchEONETClient(): Promise<DisasterReport[]> {
 }
 
 /**
- * 3. UN ReliefWeb Open API (Native Browser CORS)
- */
-async function fetchReliefWebClient(): Promise<DisasterReport[]> {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-    const res = await fetch('https://api.reliefweb.int/v1/reports?appname=ndrf-disaster-portal&limit=25&preset=latest', { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (!res.ok) return [];
-
-    const data = await res.json();
-    const items = data.data || [];
-    const reports: DisasterReport[] = [];
-
-    for (const item of items) {
-      const title = cleanText(item.fields?.title || '');
-      const body = cleanText(item.fields?.body || title);
-      const fullText = `${title} ${body}`;
-
-      if (!isStrictIndiaDisaster(title, body)) continue;
-
-      const category = classifyCategory(fullText);
-      if (!category) continue;
-
-      const loc = extractLocation(fullText);
-      const time = item.fields?.date?.created ? new Date(item.fields.date.created).toISOString() : new Date().toISOString();
-
-      reports.push({
-        id: `reliefweb-${item.id}`,
-        clusterId: `cluster-rw-${item.id}`,
-        category,
-        severity: inferSeverity(fullText),
-        location: loc,
-        headline: title,
-        description: body.slice(0, 280),
-        source: {
-          type: 'official',
-          name: 'UN ReliefWeb OCHA',
-          verified: true,
-          handleOrUrl: item.fields?.url,
-        },
-        credibilityScore: 97,
-        language: 'en',
-        timestamp: time,
-      });
-    }
-
-    return reports;
-  } catch (err) {
-    console.warn('[Live Client Telemetry] ReliefWeb fetch warning:', err);
-    return [];
-  }
-}
-
-/**
- * 4. GNews Client Fetch
+ * 3. GNews API – live Indian disaster news
  */
 async function fetchGNewsClient(): Promise<DisasterReport[]> {
   const apiKey = getEnvVar('VITE_GNEWS_KEY') || getEnvVar('GNEWS_KEY') || '1866b0c31d95e5e2e27ba553068a7c46';
   if (!apiKey) return [];
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-    const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue) India');
-    const res = await fetch(`https://gnews.io/api/v4/search?q=${query}&lang=en&country=in&max=15&apikey=${apiKey}`, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (!res.ok) return [];
+    const query = encodeURIComponent('(flood OR landslide OR cyclone OR earthquake OR collapse OR fire OR rescue) India');
+    const res = await fetchWithTimeout(
+      `https://gnews.io/api/v4/search?q=${query}&lang=en&country=in&max=20&apikey=${apiKey}`,
+      {},
+      8000
+    );
+    if (!res.ok) {
+      console.warn('[Live Client Telemetry] GNews response not OK:', res.status);
+      return [];
+    }
 
     const data = await res.json();
     const articles = data.articles || [];
@@ -278,8 +223,8 @@ async function fetchGNewsClient(): Promise<DisasterReport[]> {
       const time = art.publishedAt ? new Date(art.publishedAt).toISOString() : new Date().toISOString();
 
       reports.push({
-        id: `client-gnews-${Math.random().toString(36).substr(2, 9)}`,
-        clusterId: `cluster-gnews-${Math.random().toString(36).substr(2, 9)}`,
+        id: `gnews-${encodeURIComponent(art.url || title).slice(0, 32)}`,
+        clusterId: `cluster-gnews-${encodeURIComponent(title).slice(0, 32)}`,
         category,
         severity: inferSeverity(fullText),
         location: loc,
@@ -287,7 +232,7 @@ async function fetchGNewsClient(): Promise<DisasterReport[]> {
         description: desc.slice(0, 280),
         source: {
           type: 'news',
-          name: art.source?.name || 'GNews Source',
+          name: art.source?.name || 'GNews',
           verified: true,
           handleOrUrl: art.url,
         },
@@ -298,6 +243,7 @@ async function fetchGNewsClient(): Promise<DisasterReport[]> {
       });
     }
 
+    console.log(`[Live Client Telemetry] GNews returned ${reports.length} India disaster articles.`);
     return reports;
   } catch (err) {
     console.warn('[Live Client Telemetry] GNews fetch warning:', err);
@@ -306,35 +252,32 @@ async function fetchGNewsClient(): Promise<DisasterReport[]> {
 }
 
 /**
- * 5. Live Indian News RSS Feeds via Cross-Platform Regex Parsing
+ * 4. Live Indian News RSS Feeds via allorigins CORS proxy
  */
 async function fetchRSSClient(): Promise<DisasterReport[]> {
   const rssUrls = [
     { url: 'https://www.thehindu.com/news/national/feeder/default.rss', name: 'The Hindu National' },
     { url: 'https://www.thehindu.com/news/states/feeder/default.rss', name: 'The Hindu States' },
-    { url: 'https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms', name: 'Times of India India' },
-    { url: 'https://timesofindia.indiatimes.com/rssfeeds/2647163.cms', name: 'Times of India Environment' },
+    { url: 'https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms', name: 'Times of India' },
     { url: 'https://feeds.feedburner.com/ndtvnews-india-news', name: 'NDTV India' },
-    { url: 'https://indianexpress.com/section/india/feed/', name: 'Indian Express' },
   ];
 
   const reports: DisasterReport[] = [];
 
-  for (const feed of rssUrls) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-
+  // Use Promise.allSettled so one slow feed doesn't block others
+  const feedResults = await Promise.allSettled(
+    rssUrls.map(async (feed) => {
       const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(feed.url)}`;
-      const res = await fetch(proxyUrl, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) continue;
+      const res = await fetchWithTimeout(proxyUrl, {}, 8000);
+      if (!res.ok) return [];
 
       const xmlText = await res.text();
-      const itemMatches = xmlText.match(/<item>[\s\S]*?<\/item>/gi) || [];
+      const items: DisasterReport[] = [];
 
-      for (const itemXml of itemMatches.slice(0, 15)) {
+      // Regex-based XML parsing (no DOMParser dependency)
+      const itemMatches = xmlText.match(/<item[\s\S]*?<\/item>/gi) || [];
+
+      for (const itemXml of itemMatches.slice(0, 20)) {
         const titleMatch = itemXml.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
         const descMatch = itemXml.match(/<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
         const pubDateMatch = itemXml.match(/<pubDate>([\s\S]*?)<\/pubDate>/i);
@@ -345,7 +288,7 @@ async function fetchRSSClient(): Promise<DisasterReport[]> {
         const pubDate = pubDateMatch ? pubDateMatch[1].trim() : undefined;
         const link = linkMatch ? linkMatch[1].trim() : undefined;
 
-        if (!isStrictIndiaDisaster(title, desc)) continue;
+        if (!title || !isStrictIndiaDisaster(title, desc)) continue;
 
         const category = classifyCategory(`${title} ${desc}`);
         if (!category) continue;
@@ -353,27 +296,29 @@ async function fetchRSSClient(): Promise<DisasterReport[]> {
         const loc = extractLocation(`${title} ${desc}`);
         const time = pubDate ? new Date(pubDate).toISOString() : new Date().toISOString();
 
-        reports.push({
-          id: `client-rss-${Math.random().toString(36).substr(2, 9)}`,
-          clusterId: `cluster-rss-${Math.random().toString(36).substr(2, 9)}`,
+        items.push({
+          id: `client-rss-${encodeURIComponent(link || title).slice(0, 32)}`,
+          clusterId: `cluster-rss-${encodeURIComponent(title).slice(0, 32)}`,
           category,
           severity: inferSeverity(`${title} ${desc}`),
           location: loc,
           headline: title,
           description: desc.slice(0, 280),
-          source: {
-            type: 'news',
-            name: feed.name,
-            verified: true,
-            handleOrUrl: link,
-          },
+          source: { type: 'news', name: feed.name, verified: true, handleOrUrl: link },
           credibilityScore: 90,
           language: 'en',
           timestamp: time,
         });
       }
-    } catch (err) {
-      console.warn(`[Live Client Telemetry] RSS fetch warning for ${feed.name}:`, err);
+
+      console.log(`[Live Client Telemetry] ${feed.name}: ${items.length} India disaster articles.`);
+      return items;
+    })
+  );
+
+  for (const result of feedResults) {
+    if (result.status === 'fulfilled') {
+      reports.push(...result.value);
     }
   }
 

@@ -11,11 +11,14 @@ import { performSmartClustering } from '../lib/clustering';
 import { isStrictIndiaDisaster } from '../../server/classifier';
 import { fetchLiveClientTelemetry } from './liveClientFetcher';
 
-const API_BASE_URL = 'http://127.0.0.1:3001/api';
+// Always try the local backend first; Vercel deploys only have window.location available
+const isVercel = typeof window !== 'undefined' && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1');
+const API_BASE_URL = isVercel ? '' : 'http://127.0.0.1:3001/api';
 
 let sessionPushedReports: DisasterReport[] = [];
 let liveClientFetchedReports: DisasterReport[] = [];
 let lastClientFetchTimeMs = 0;
+
 
 /**
  * Returns fresh mock reports merged with live client fetched telemetry and session dispatches
@@ -23,11 +26,14 @@ let lastClientFetchTimeMs = 0;
 async function getFreshLocalReports(): Promise<DisasterReport[]> {
   const now = Date.now();
 
-  // Fetch live open-source telemetry in browser every 60 seconds when backend Express server is unavailable
-  if (now - lastClientFetchTimeMs > 60000 || liveClientFetchedReports.length === 0) {
+  // Fetch live open-source telemetry in browser every 90 seconds
+  if (now - lastClientFetchTimeMs > 90000 || liveClientFetchedReports.length === 0) {
     try {
-      liveClientFetchedReports = await fetchLiveClientTelemetry();
-      lastClientFetchTimeMs = now;
+      const fresh = await fetchLiveClientTelemetry();
+      if (fresh.length > 0) {
+        liveClientFetchedReports = fresh;
+        lastClientFetchTimeMs = now;
+      }
     } catch (err) {
       console.warn('[mockApi] Live client telemetry fetch fallback warning:', err);
     }
@@ -48,11 +54,18 @@ async function getFreshLocalReports(): Promise<DisasterReport[]> {
     }
   }
 
+  // Sort by most recent timestamp
+  uniqueReports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   return uniqueReports;
 }
 
 export function pushLiveReport(report: DisasterReport): void {
   sessionPushedReports = [report, ...sessionPushedReports];
+}
+
+// Force-invalidate the client-side telemetry cache so next call re-fetches
+export function invalidateClientCache(): void {
+  lastClientFetchTimeMs = 0;
 }
 
 export function applyFilters(reports: DisasterReport[], filters?: FilterState): DisasterReport[] {
@@ -105,53 +118,89 @@ export function applyFilters(reports: DisasterReport[], filters?: FilterState): 
  * Fetch reports from Node.js backend (/api/reports) with dynamic live fallback
  */
 export async function getReports(filters?: FilterState): Promise<DisasterReport[]> {
-  try {
-    const params = new URLSearchParams();
-    if (filters?.categories && filters.categories.length > 0) {
-      params.append('categories', filters.categories.join(','));
-    }
-    if (filters?.severities && filters.severities.length > 0) {
-      params.append('severities', filters.severities.join(','));
-    }
-    if (filters?.verifiedOnly) {
-      params.append('verifiedOnly', 'true');
-    }
-    if (filters?.sourceType && filters.sourceType !== 'all') {
-      params.append('sourceType', filters.sourceType);
-    }
-    if (filters?.region && filters.region !== 'all') {
-      params.append('region', filters.region);
-    }
-    if (filters?.searchQuery) {
-      params.append('search', filters.searchQuery);
-    }
-
-    const res = await fetch(`${API_BASE_URL}/reports?${params.toString()}`);
-    if (res.ok) {
-      const backendReports = await res.json();
-      if (Array.isArray(backendReports) && backendReports.length > 0) {
-        return backendReports;
+  // On localhost: try backend Express server
+  if (!isVercel && API_BASE_URL) {
+    try {
+      const params = new URLSearchParams();
+      if (filters?.categories && filters.categories.length > 0) {
+        params.append('categories', filters.categories.join(','));
       }
+      if (filters?.severities && filters.severities.length > 0) {
+        params.append('severities', filters.severities.join(','));
+      }
+      if (filters?.verifiedOnly) {
+        params.append('verifiedOnly', 'true');
+      }
+      if (filters?.sourceType && filters.sourceType !== 'all') {
+        params.append('sourceType', filters.sourceType);
+      }
+      if (filters?.region && filters.region !== 'all') {
+        params.append('region', filters.region);
+      }
+      if (filters?.searchQuery) {
+        params.append('search', filters.searchQuery);
+      }
+
+      // Cache-bust with timestamp to prevent browser fetch caching stale data
+      params.append('_t', String(Date.now()));
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${API_BASE_URL}/reports?${params.toString()}`, {
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        const backendReports = await res.json();
+        if (Array.isArray(backendReports) && backendReports.length > 0) {
+          // Sort by latest timestamp
+          backendReports.sort((a: DisasterReport, b: DisasterReport) =>
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+          return backendReports;
+        }
+      }
+    } catch (err) {
+      // Fall through to live client telemetry fallback
     }
-  } catch (err) {
-    // Fall back to live client telemetry if backend is unavailable
   }
 
+  // On Vercel (or when backend unreachable): use live browser telemetry
   const reports = await getFreshLocalReports();
   return applyFilters(reports, filters);
+}
+
+/**
+ * Trigger a full pipeline re-ingestion + cache invalidation
+ */
+export async function triggerPipelineAndRefresh(): Promise<void> {
+  // On localhost: hit backend pipeline endpoint
+  if (!isVercel && API_BASE_URL) {
+    try {
+      await fetch(`${API_BASE_URL.replace('/api', '')}/api/pipeline/run`, {
+        method: 'POST',
+        cache: 'no-store',
+      });
+    } catch (_) {}
+  }
+  // On Vercel: force-invalidate client telemetry cache so next getReports() re-fetches
+  invalidateClientCache();
 }
 
 /**
  * Fetch single report by ID
  */
 export async function getIncidentById(id: string): Promise<DisasterReport | null> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/reports/${id}`);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (err) {
-    // Fall back
+  if (!isVercel && API_BASE_URL) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${API_BASE_URL}/reports/${id}`, { signal: controller.signal, cache: 'no-store' });
+      clearTimeout(timeoutId);
+      if (res.ok) return await res.json();
+    } catch (_) {}
   }
 
   const reports = await getFreshLocalReports();
@@ -163,13 +212,14 @@ export async function getIncidentById(id: string): Promise<DisasterReport | null
  * Fetch incident cluster by clusterId
  */
 export async function getClusterById(clusterId: string): Promise<IncidentCluster | null> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/clusters/${clusterId}`);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (err) {
-    // Fall back
+  if (!isVercel && API_BASE_URL) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${API_BASE_URL}/clusters/${clusterId}`, { signal: controller.signal, cache: 'no-store' });
+      clearTimeout(timeoutId);
+      if (res.ok) return await res.json();
+    } catch (_) {}
   }
 
   const freshReports = await getFreshLocalReports();
@@ -183,13 +233,14 @@ export async function getClusterById(clusterId: string): Promise<IncidentCluster
  * Fetch dashboard stats
  */
 export async function getStats(filters?: FilterState): Promise<DashboardStats> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/stats`);
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch (err) {
-    // Fall back
+  if (!isVercel && API_BASE_URL) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${API_BASE_URL}/stats`, { signal: controller.signal, cache: 'no-store' });
+      clearTimeout(timeoutId);
+      if (res.ok) return await res.json();
+    } catch (_) {}
   }
 
   const reports = await getFreshLocalReports();
