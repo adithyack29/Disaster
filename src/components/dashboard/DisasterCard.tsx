@@ -164,9 +164,9 @@ export const DisasterCard: React.FC<DisasterCardProps> = ({ cluster, onClick }) 
               )}
             </div>
 
-            {/* Fixed First Reported Timestamp */}
-            <span className="text-xs font-mono-data tabular-nums font-semibold text-[#6B7280] shrink-0" title={`First reported: ${cluster.firstReportedAt}`}>
-              {formatTimeAgo(cluster.firstReportedAt)}
+            {/* Latest Report Timestamp */}
+            <span className="text-xs font-mono-data tabular-nums font-semibold text-[#6B7280] shrink-0" title={`Latest reported: ${cluster.lastReportedAt || cluster.firstReportedAt}`}>
+              {formatTimeAgo(cluster.lastReportedAt || cluster.firstReportedAt)}
             </span>
           </div>
 
