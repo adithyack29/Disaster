@@ -4,7 +4,8 @@ import type {
   IncidentCluster, 
   DashboardStats, 
   PulseBucket, 
-  SeverityLevel 
+  SeverityLevel,
+  CategoryType
 } from '../types/incident';
 import { INITIAL_MOCK_REPORTS } from './mockReports';
 import { performSmartClustering } from '../lib/clustering';
@@ -60,7 +61,7 @@ export function applyFilters(reports: DisasterReport[], filters?: FilterState): 
 }
 
 /**
- * Fetch reports from Node.js backend (/api/reports)
+ * Fetch reports from Node.js backend (/api/reports) with fallback
  */
 export async function getReports(filters?: FilterState): Promise<DisasterReport[]> {
   try {
@@ -218,4 +219,97 @@ export async function getPulseTimeline(filters?: FilterState): Promise<PulseBuck
 
 export function pushLiveReport(report: DisasterReport): void {
   localReports = [report, ...localReports];
+}
+
+// Live Telemetry Dispatch Injector Templates
+const DEMO_LIVE_DISPATCH_TEMPLATES = [
+  {
+    clusterId: 'cluster-kerala-kochi-01',
+    headline: 'KSDMA Bulletin: High-tide surge receding slowly; 4 extra motorboats deployed at Fort Kochi',
+    description: 'General Hospital Annex water level down by 0.3m. Emergency power restoration in progress.',
+    source: { type: 'official', name: 'Kerala State Disaster Management Authority (KSDMA)', verified: true },
+    severity: 'critical',
+    category: 'flood',
+    location: { lat: 9.9312, lng: 76.2673, placeName: 'Fort Kochi Coastal Zone', state: 'Kerala' },
+    credibilityScore: 98,
+  },
+  {
+    clusterId: 'cluster-wayanad-landslide-02',
+    headline: 'Southern Command Engineers complete footbridge launch across Meppadi torrent',
+    description: '122 Infantry Battalion task force opens foot transit for emergency supply carrying team.',
+    source: { type: 'official', name: 'Southern Command Indian Army', verified: true },
+    severity: 'critical',
+    category: 'landslide',
+    location: { lat: 11.5304, lng: 76.1306, placeName: 'Meppadi Chooralmala Sector', state: 'Kerala' },
+    credibilityScore: 100,
+  },
+  {
+    clusterId: 'cluster-assam-kaziranga-03',
+    headline: 'ASDMA Update: Brahmaputra discharge stabilizes at Bokakhat; relief camps stocked',
+    description: 'Over 15,000 villagers accommodated across 24 temporary relief centers along NH-37.',
+    source: { type: 'official', name: 'ASDMA (Assam State Disaster Management)', verified: true },
+    severity: 'critical',
+    category: 'flood',
+    location: { lat: 26.5925, lng: 93.4116, placeName: 'Bokakhat Sub-Division', state: 'Assam' },
+    credibilityScore: 99,
+  },
+  {
+    clusterId: 'cluster-uttarakhand-dharasu-04',
+    headline: 'BRO clears upper rockfall debris at Dharasu Bend; emergency vehicle convoys allowed',
+    description: 'Light vehicles permitted to move towards Uttarkashi. Heavy earthmovers clearing remaining boulders.',
+    source: { type: 'official', name: 'Uttarakhand State Disaster Response Force (SDRF)', verified: true },
+    severity: 'critical',
+    category: 'landslide',
+    location: { lat: 30.7268, lng: 78.4354, placeName: 'Dharasu Bend Highway km 42', state: 'Uttarakhand' },
+    credibilityScore: 97,
+  },
+  {
+    clusterId: 'cluster-odisha-puri-05',
+    headline: 'IMD Alert: Cyclone ASNA storm surge subsides; Puri port operations resuming',
+    description: 'Power grid restoration crews working on main Bhubaneswar-Puri 132kV transmission line.',
+    source: { type: 'official', name: 'IMD India Meteorological Department', verified: true },
+    severity: 'critical',
+    category: 'cyclone',
+    location: { lat: 19.8135, lng: 85.8312, placeName: 'Puri Coastal Bay Sector', state: 'Odisha' },
+    credibilityScore: 100,
+  },
+  {
+    clusterId: 'cluster-gujarat-surat-06',
+    headline: 'GPCB Field Team: Chemical air quality stabilizes at Pandesara industrial zone',
+    description: 'Foam cover containment successful. Mobile monitoring van reports VOC levels dropping to safe range.',
+    source: { type: 'official', name: 'Gujarat Pollution Control Board (GPCB)', verified: true },
+    severity: 'high',
+    category: 'fire',
+    location: { lat: 21.1702, lng: 72.8311, placeName: 'Pandesara Industrial Estate', state: 'Gujarat' },
+    credibilityScore: 96,
+  },
+];
+
+let dispatchIndex = 0;
+
+export function injectLiveSimulatedDispatch(): DisasterReport {
+  const tpl = DEMO_LIVE_DISPATCH_TEMPLATES[dispatchIndex % DEMO_LIVE_DISPATCH_TEMPLATES.length];
+  dispatchIndex++;
+
+  const newReport: DisasterReport = {
+    id: `live-sim-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    clusterId: tpl.clusterId,
+    category: tpl.category as CategoryType,
+    severity: tpl.severity as SeverityLevel,
+    location: tpl.location,
+    headline: tpl.headline,
+    description: tpl.description,
+    source: {
+      type: tpl.source.type as any,
+      name: tpl.source.name,
+      verified: tpl.source.verified,
+    },
+    credibilityScore: tpl.credibilityScore,
+    language: 'en',
+    timestamp: new Date().toISOString(),
+    classificationMethod: 'ai',
+  };
+
+  localReports = [newReport, ...localReports];
+  return newReport;
 }
