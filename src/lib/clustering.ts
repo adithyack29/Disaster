@@ -21,18 +21,20 @@ function extractKeyWords(text: string): Set<string> {
 }
 
 /**
- * Filter out non-disaster, US weather feeds, and foreign news topics
+ * Filter out non-disaster, US weather feeds, political/protest items, and foreign news topics
  */
 function isDisasterTopic(headline: string, description: string): boolean {
   const fullText = `${headline} ${description}`.toLowerCase();
 
   const forbiddenTerms = [
     'teacher', 'assignment', 'school enrolment', 'udise+', 'student enrollment',
+    'protest', 'lathi-charge', 'lathi', 'protesters', 'assembly march', 'demonstration',
     'cricket', 'ipl', 'bollywood', 'movie', 'actor', 'actress', 'box office',
-    'election', 'political party', 'speech', 'modi vs', 'rahul gandhi', 'stock market',
-    'sensex', 'nifty', 'share price', 'crypto', 'iphone', 'gadget', 'smartphone',
+    'election', 'political party', 'speech', 'modi vs', 'rahul gandhi', 'bjp', 'congress',
+    'hindutva', 'ideologue', 'mcbroom', 'spider-man', 'controversy', 'land dispute', 'firing along',
+    'stock market', 'sensex', 'nifty', 'share price', 'crypto', 'iphone', 'gadget', 'smartphone',
     'gaza', 'israel', 'netanyahu', 'hamas', 'russia', 'ukraine', 'kharkiv', 'odesa',
-    'moldova', 'florida', 'california', 'beijing', 'taiwan', 'trump', 'biden',
+    'moldova', 'florida', 'california', 'hawaii', 'naalehu', 'alaska', 'beijing', 'taiwan', 'trump', 'biden',
     'nws', 'flashfloodwarning', '#inwx', '#ffw', 'lake, in', 'porter, in', 'indiana',
     'denmark', 'skjern', 'hoboken', 'resiliencity', 'national coastline zone', 'central command zone'
   ];
@@ -158,7 +160,7 @@ export function performSmartClustering(
     report.headline = cleanText(report.headline);
     report.description = cleanText(report.description);
 
-    // Instant Reject if topic is forbidden (e.g. US NWS feeds, Florida teacher, Denmark, Hoboken, Russia-Ukraine, Israel-Gaza)
+    // Instant Reject if topic is forbidden
     if (!isDisasterTopic(report.headline, report.description)) {
       continue;
     }
@@ -259,10 +261,6 @@ export function performSmartClustering(
         reason: `Representative headline selected from ${repReport.source.name} (${repReport.source.type})`,
       };
       history.unshift(titleEntry);
-
-      console.log(
-        `[Cluster Intel] ${cluster.clusterId}: Representative headline updated to "${repReport.headline}" (Source: ${repReport.source.name})`
-      );
     } else {
       cluster.representativeReportId = repReport.id;
       cluster.title = repReport.headline;
@@ -288,10 +286,6 @@ export function performSmartClustering(
         reason: `${actionVerb} ${prevSev.toUpperCase()} → ${newSev.toUpperCase()} (${sevReason})`,
       };
       history.unshift(sevEntry);
-
-      console.log(
-        `[Cluster Intel] ${cluster.clusterId}: ${actionVerb} ${prevSev} -> ${newSev} (Reason: ${sevReason})`
-      );
     }
 
     cluster.history = history;

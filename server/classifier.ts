@@ -166,39 +166,31 @@ export function isStrictIndiaDisaster(headline: string, description: string): bo
   const cleanedDesc = cleanText(description);
   const fullText = `${cleanedHeadline} ${cleanedDesc}`.toLowerCase();
 
-  // 1. Explicit Foreign / US Weather Feed / Non-India Location Rejection
-  const foreignLocations = [
-    'nws', 'flashfloodwarning', '#inwx', '#ffw', 'lake, in', 'porter, in', 'indiana',
-    'denmark', 'skjern', 'hoboken', 'resiliencity', 'new jersey', 'california', 'florida',
-    'gaza', 'israel', 'netanyahu', 'hamas', 'russia', 'ukraine', 'kharkiv', 'odesa',
-    'moldova', 'beijing', 'taiwan', 'tokyo', 'philippines', 'chile', 'mexico',
-    'pakistan', 'afghanistan', 'bangladesh', 'colombo', 'kathmandu'
-  ];
-
-  if (foreignLocations.some((loc) => fullText.includes(loc))) {
-    return false;
-  }
-
-  // 2. Non-Disaster Irrelevant Topics (Instant Reject)
-  const nonDisasterTerms = [
+  // 1. Explicit Non-Disaster / Political / Protest / Foreign Rejection
+  const forbiddenTerms = [
     'teacher', 'assignment', 'school enrolment', 'udise+', 'student enrollment',
+    'protest', 'lathi-charge', 'lathi', 'protesters', 'assembly march', 'demonstration',
     'cricket', 'ipl', 'bollywood', 'movie', 'actor', 'actress', 'box office',
-    'election', 'political party', 'speech', 'modi vs', 'rahul gandhi', 'stock market',
-    'sensex', 'nifty', 'share price', 'crypto', 'iphone', 'gadget', 'smartphone',
-    'restoration project', 'city park'
+    'election', 'political party', 'speech', 'modi vs', 'rahul gandhi', 'bjp', 'congress',
+    'hindutva', 'ideologue', 'mcbroom', 'spider-man', 'controversy', 'land dispute', 'firing along',
+    'stock market', 'sensex', 'nifty', 'share price', 'crypto', 'iphone', 'gadget', 'smartphone',
+    'gaza', 'israel', 'netanyahu', 'hamas', 'russia', 'ukraine', 'kharkiv', 'odesa',
+    'moldova', 'florida', 'california', 'hawaii', 'naalehu', 'alaska', 'beijing', 'taiwan', 'trump', 'biden',
+    'nws', 'flashfloodwarning', '#inwx', '#ffw', 'lake, in', 'porter, in', 'indiana',
+    'denmark', 'skjern', 'hoboken', 'resiliencity', 'national coastline zone', 'central command zone'
   ];
 
-  if (nonDisasterTerms.some((term) => fullText.includes(term))) {
+  if (forbiddenTerms.some((term) => fullText.includes(term))) {
     return false;
   }
 
-  // 3. Disaster Category Check
+  // 2. Disaster Category Check
   const category = classifyCategory(fullText);
   if (!category) {
     return false;
   }
 
-  // 4. Must match an explicit Indian location or mention India/NDRF/SDRF/Indian agencies
+  // 3. Must match an explicit Indian location or mention India/NDRF/SDRF/Indian agencies
   const matchesIndianLocation = INDIAN_LOCATIONS.some((loc) => fullText.includes(loc.keyword));
   const hasExplicitIndiaAgency = fullText.includes('india') || fullText.includes('indian') || fullText.includes('ndrf') || fullText.includes('sdrf') || fullText.includes('ksdma') || fullText.includes('asdma') || fullText.includes('osdma') || fullText.includes('imd');
 
