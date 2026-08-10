@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { RefreshCw, ShieldAlert, Loader2 } from 'lucide-react';
 import { useDashboardStore } from '../../store/useDashboardStore';
-import { injectLiveSimulatedDispatch } from '../../data/mockApi';
 
 export const TopLiveHeader: React.FC = () => {
   const { triggerRefresh } = useDashboardStore();
@@ -10,15 +9,12 @@ export const TopLiveHeader: React.FC = () => {
   const handleManualReload = async () => {
     setIsReloading(true);
     try {
-      // 1. Try Backend Ingestion Pass
       await fetch('http://127.0.0.1:3001/api/pipeline/run', { method: 'POST' });
     } catch (err) {
       console.warn('Backend reload warning:', err);
     } finally {
-      // 2. Inject fresh live dispatch for instant visual feedback on frontend
-      injectLiveSimulatedDispatch();
       triggerRefresh();
-      setTimeout(() => setIsReloading(false), 600);
+      setTimeout(() => setIsReloading(false), 800);
     }
   };
 
@@ -58,7 +54,7 @@ export const TopLiveHeader: React.FC = () => {
         <button
           onClick={handleManualReload}
           disabled={isReloading}
-          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#1E3A5F] hover:bg-[#152a45] text-white shadow-2xs transition-all cursor-pointer disabled:opacity-75 hover:scale-105 active:scale-95"
+          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#1E3A5F] hover:bg-[#152a45] text-white shadow-2xs transition-all cursor-pointer disabled:opacity-75"
           title="Manual reload & re-run AI ingestion pipeline"
         >
           {isReloading ? (

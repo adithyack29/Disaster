@@ -1,16 +1,14 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import type { IncidentCluster } from '../types/incident';
+import { getReports } from '../data/mockApi';
 import { useDashboardStore } from '../store/useDashboardStore';
-import type { IncidentCluster, DashboardStats, PulseBucket, DisasterReport } from '../types/incident';
-import { getReports, getStats, getPulseTimeline, injectLiveSimulatedDispatch } from '../data/mockApi';
-import { performSmartClustering } from '../lib/clustering';
 import { TopLiveHeader } from '../components/layout/TopLiveHeader';
 import { CategoryFilterBar } from '../components/filters/CategoryFilterBar';
-import { StatsBar } from '../components/dashboard/StatsBar';
-import { PulseTimeline } from '../components/dashboard/PulseTimeline';
 import { DisasterCardGrid } from '../components/dashboard/DisasterCardGrid';
-import { DisasterMap } from '../components/map/DisasterMap';
 import { IncidentDetailPanel } from '../components/incident/IncidentDetailPanel';
+import { performSmartClustering } from '../lib/clustering';
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
@@ -18,33 +16,18 @@ export const DashboardPage: React.FC = () => {
   const { filters, lastUpdated, triggerRefresh } = useDashboardStore();
 
   const [clusters, setClusters] = useState<IncidentCluster[]>([]);
-  const [stats, setStats] = useState<DashboardStats>({
-    activeIncidents: 0,
-    criticalCount: 0,
-    highCount: 0,
-    reportsLastHour: 0,
-    verifiedPercentage: 0,
-    monitoredSourcesCount: 0,
-  });
-  const [buckets, setBuckets] = useState<PulseBucket[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Fetch reports, stats, and pulse buckets
+  // Fetch reports and group into IncidentCluster objects
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
 
-    Promise.all([
-      getReports(filters),
-      getStats(filters),
-      getPulseTimeline(filters),
-    ]).then(([fetchedReports, fetchedStats, fetchedBuckets]) => {
+    getReports(filters).then((fetchedReports) => {
       if (!isMounted) return;
 
       const clusterList = performSmartClustering(fetchedReports);
       setClusters(clusterList);
-      setStats(fetchedStats);
-      setBuckets(fetchedBuckets);
       setLoading(false);
     });
 
@@ -52,17 +35,6 @@ export const DashboardPage: React.FC = () => {
       isMounted = false;
     };
   }, [filters, lastUpdated]);
-
-  // High-Frequency Real-Time Telemetry Ticker (ticks every 15 seconds for live dynamic updates)
-  useEffect(() => {
-    const TICK_INTERVAL = 15 * 1000;
-    const ticker = setInterval(() => {
-      injectLiveSimulatedDispatch();
-      triggerRefresh();
-    }, TICK_INTERVAL);
-
-    return () => clearInterval(ticker);
-  }, [triggerRefresh]);
 
   // Auto-classification & telemetry ingestion pass: Once every 3 minutes (180,000 ms)
   useEffect(() => {
@@ -73,7 +45,6 @@ export const DashboardPage: React.FC = () => {
       } catch (err) {
         console.warn('Auto-reload pipeline error:', err);
       } finally {
-        injectLiveSimulatedDispatch();
         triggerRefresh();
       }
     }, THREE_MINUTES);
@@ -84,13 +55,13 @@ export const DashboardPage: React.FC = () => {
   const filteredClusters = useMemo(() => {
     let result = [...clusters];
 
-    // 1. Recently reported filter (Strictly updated within the last 60 minutes)
+    // 1. Recently reported filter (< 6 hours or newest dispatches)
     if (filters.recentlyReportedOnly) {
-      const RECENT_WINDOW_MS = 60 * 60 * 1000;
-      const now = Date.now();
-      result = result.filter(
-        (c) => (now - new Date(c.lastReportedAt || c.firstReportedAt).getTime()) <= RECENT_WINDOW_MS
+      const sixHoursAgo = Date.now() - 6 * 3600 * 1000;
+      const recent = result.filter(
+        (c) => new Date(c.lastReportedAt || c.firstReportedAt).getTime() >= sixHoursAgo
       );
+      result = recent.length > 0 ? recent : result;
     }
 
     // 2. Categories filter
@@ -121,27 +92,12 @@ export const DashboardPage: React.FC = () => {
     return result;
   }, [clusters, filters]);
 
-  // Extract all individual reports for Leaflet Disaster Map
-  const mapReports = useMemo(() => {
-    const reports: DisasterReport[] = [];
-    filteredClusters.forEach((c) => {
-      c.reports.forEach((r) => reports.push(r));
-    });
-    return reports;
-  }, [filteredClusters]);
-
   const selectedCluster = activeClusterId
     ? clusters.find((c) => c.clusterId === activeClusterId) || null
     : null;
 
   const handleCardClick = (clusterId: string) => {
     navigate(`/incident/${clusterId}`);
-  };
-
-  const handleSelectReport = (report: DisasterReport) => {
-    if (report.clusterId) {
-      navigate(`/incident/${report.clusterId}`);
-    }
   };
 
   const handleClosePanel = () => {
@@ -156,43 +112,39 @@ export const DashboardPage: React.FC = () => {
       {/* 2. Horizontal Category Filter Bar */}
       <CategoryFilterBar />
 
-      {/* 3. Executive Stats Bar */}
-      <StatsBar stats={stats} loading={loading} />
-
-      {/* Main Content Area: Split View Grid + Map + Sliding Detail Panel */}
+      {/* 3. Main Content Split View (Grid + Docked Right Detail Panel) */}
       <div className="flex-1 flex overflow-hidden relative">
-        {/* Left / Main Workspace */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-[#F7F8FA]">
-          {/* Top 24-Hour Severity Trend Bar */}
-          <PulseTimeline buckets={buckets} />
+        {/* Left Side: Card Grid (Smoothly compresses width when panel opens) */}
+        <motion.main
+          layout
+          transition={{ duration: 0.3, ease: 'easeOut' }}
+          className="flex-1 overflow-y-auto min-w-0"
+        >
+          <DisasterCardGrid
+            clusters={filteredClusters}
+            loading={loading}
+            onCardClick={handleCardClick}
+          />
+        </motion.main>
 
-          {/* Interactive Split View: Left Card Grid (7/12) | Right Live Map (5/12) */}
-          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-0 overflow-hidden border-t border-[#E4E7EC]">
-            {/* Incident Cards Column */}
-            <div className="lg:col-span-7 h-full overflow-y-auto p-4 border-r border-[#E4E7EC] bg-[#FFFFFF]">
-              <DisasterCardGrid
-                clusters={filteredClusters}
-                loading={loading}
-                onCardClick={handleCardClick}
+        {/* Right Side: Docked Detail Panel (Side-by-side flex sibling on desktop, overlay on mobile) */}
+        <AnimatePresence>
+          {selectedCluster && (
+            <motion.div
+              key="detail-panel"
+              initial={{ x: '100%', opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: '100%', opacity: 0 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+              className="relative shrink-0 w-full md:w-[450px] lg:w-[480px] h-full z-20"
+            >
+              <IncidentDetailPanel
+                cluster={selectedCluster}
+                onClose={handleClosePanel}
               />
-            </div>
-
-            {/* Live Interactive Map Column */}
-            <div className="hidden lg:block lg:col-span-5 h-full relative bg-[#F7F8FA]">
-              <DisasterMap
-                reports={mapReports}
-                onSelectReport={handleSelectReport}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Right Side Incident Detail Dossier Panel */}
-        {selectedCluster && (
-          <aside className="w-full md:w-[480px] lg:w-[520px] h-full absolute right-0 top-0 z-40 animate-in slide-in-from-right duration-200">
-            <IncidentDetailPanel cluster={selectedCluster} onClose={handleClosePanel} />
-          </aside>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
