@@ -9,21 +9,49 @@ import type {
 import { getFreshMockReports } from './mockReports';
 import { performSmartClustering } from '../lib/clustering';
 import { isStrictIndiaDisaster } from '../../server/classifier';
+import { fetchLiveClientTelemetry } from './liveClientFetcher';
 
 const API_BASE_URL = 'http://127.0.0.1:3001/api';
 
 let sessionPushedReports: DisasterReport[] = [];
+let liveClientFetchedReports: DisasterReport[] = [];
+let lastClientFetchTimeMs = 0;
 
 /**
- * Returns fresh mock reports merged with live session dispatches
+ * Returns fresh mock reports merged with live client fetched telemetry and session dispatches
  */
-function getFreshLocalReports(): DisasterReport[] {
+async function getFreshLocalReports(): Promise<DisasterReport[]> {
+  const now = Date.now();
+
+  // Fetch live open-source telemetry in browser every 60 seconds when backend Express server is unavailable
+  if (now - lastClientFetchTimeMs > 60000 || liveClientFetchedReports.length === 0) {
+    try {
+      liveClientFetchedReports = await fetchLiveClientTelemetry();
+      lastClientFetchTimeMs = now;
+    } catch (err) {
+      console.warn('[mockApi] Live client telemetry fetch fallback warning:', err);
+    }
+  }
+
   const base = getFreshMockReports().filter((r) => isStrictIndiaDisaster(r.headline, r.description));
-  return [...sessionPushedReports, ...base];
+  const combined = [...sessionPushedReports, ...liveClientFetchedReports, ...base];
+
+  // De-duplicate by headline
+  const seenHeadlines = new Set<string>();
+  const uniqueReports: DisasterReport[] = [];
+
+  for (const rep of combined) {
+    const key = rep.headline.toLowerCase().trim();
+    if (!seenHeadlines.has(key)) {
+      seenHeadlines.add(key);
+      uniqueReports.push(rep);
+    }
+  }
+
+  return uniqueReports;
 }
 
 export function pushLiveReport(report: DisasterReport): void {
-  // Unshift live report into active session array
   sessionPushedReports = [report, ...sessionPushedReports];
 }
 
@@ -106,10 +134,10 @@ export async function getReports(filters?: FilterState): Promise<DisasterReport[
       }
     }
   } catch (err) {
-    // Fall back to fresh local reports if backend is unavailable
+    // Fall back to live client telemetry if backend is unavailable
   }
 
-  const reports = getFreshLocalReports();
+  const reports = await getFreshLocalReports();
   return applyFilters(reports, filters);
 }
 
@@ -126,7 +154,7 @@ export async function getIncidentById(id: string): Promise<DisasterReport | null
     // Fall back
   }
 
-  const reports = getFreshLocalReports();
+  const reports = await getFreshLocalReports();
   const found = reports.find((r) => r.id === id);
   return found || null;
 }
@@ -144,7 +172,7 @@ export async function getClusterById(clusterId: string): Promise<IncidentCluster
     // Fall back
   }
 
-  const freshReports = getFreshLocalReports();
+  const freshReports = await getFreshLocalReports();
   const reports = freshReports.filter((r) => r.clusterId === clusterId);
   if (reports.length === 0) return null;
   const clusters = performSmartClustering(reports);
@@ -164,7 +192,8 @@ export async function getStats(filters?: FilterState): Promise<DashboardStats> {
     // Fall back
   }
 
-  const filtered = applyFilters(getFreshLocalReports(), filters);
+  const reports = await getFreshLocalReports();
+  const filtered = applyFilters(reports, filters);
   const nowMs = Date.now();
   const oneHourAgo = nowMs - 3600 * 1000;
 
@@ -186,7 +215,8 @@ export async function getStats(filters?: FilterState): Promise<DashboardStats> {
 }
 
 export async function getPulseTimeline(filters?: FilterState): Promise<PulseBucket[]> {
-  const filtered = applyFilters(getFreshLocalReports(), filters);
+  const reports = await getFreshLocalReports();
+  const filtered = applyFilters(reports, filters);
   const nowMs = Date.now();
   const buckets: PulseBucket[] = [];
 
