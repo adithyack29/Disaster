@@ -29,6 +29,13 @@ interface DisasterCardProps {
 }
 
 export const DisasterCard: React.FC<DisasterCardProps> = ({ cluster, onClick }) => {
+  // Live relative time ticking timer: Re-calculates formatTimeAgo every 30 seconds
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
   const sevCfg = getSeverityConfig(cluster.highestSeverity);
   const categoryLabel = getCategoryLabel(cluster.category);
 

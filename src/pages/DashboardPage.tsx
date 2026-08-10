@@ -52,6 +52,13 @@ export const DashboardPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [triggerRefresh]);
 
+  // Live relative time ticking timer (Refreshes card time labels & recent window every 30 seconds)
+  const [now, setNow] = useState<number>(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
   const filteredClusters = useMemo(() => {
     let result = [...clusters];
 
@@ -90,7 +97,7 @@ export const DashboardPage: React.FC = () => {
     );
 
     return result;
-  }, [clusters, filters]);
+  }, [clusters, filters, now]);
 
   const selectedCluster = activeClusterId
     ? clusters.find((c) => c.clusterId === activeClusterId) || null

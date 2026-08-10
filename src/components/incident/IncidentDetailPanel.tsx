@@ -41,6 +41,13 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
   const [briefMeta, setBriefMeta] = useState<BriefMeta | null>(null);
   const [loadingAi, setLoadingAi] = useState<boolean>(false);
 
+  // Live relative time ticking timer: Re-calculates formatTimeAgo every 30 seconds
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     // Reset AI brief state when switching active cluster
     setBriefMeta(null);

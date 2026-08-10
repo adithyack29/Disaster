@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import type { DisasterReport } from '../../types/incident';
 import { getSeverityConfig, getCategoryLabel } from '../../lib/severity';
 import { formatTimeAgo } from '../../lib/utils';
@@ -27,6 +27,14 @@ export const ReportCard: React.FC<ReportCardProps> = ({
   onClick,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // Live relative time ticking timer: Re-calculates formatTimeAgo every 30 seconds
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
   const sevCfg = getSeverityConfig(report.severity);
   const categoryLabel = getCategoryLabel(report.category);
 
