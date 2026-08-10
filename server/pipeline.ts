@@ -3,6 +3,7 @@ import { insertReport, saveClusters, queryReports, purgeNonIndiaReports, purgeIn
 import { getFreshMockReports } from '../src/data/mockReports';
 import { extractLocation, isStrictIndiaDisaster, cleanText } from './classifier';
 import { performSmartClustering } from '../src/lib/clustering';
+import { classifyReportsBatch } from './services/aiClassifier';
 import { fetchUSGSReports } from './adapters/usgsAdapter';
 import { fetchEONETReports } from './adapters/eonetAdapter';
 import { fetchGDACSReports } from './adapters/gdacsAdapter';
@@ -73,6 +74,9 @@ export async function runPipeline(): Promise<void> {
 
   console.log(`[Pipeline] 🇮🇳 Filtered down to ${indiaOnlyFetched.length} verified India-related disaster dispatches.`);
 
+  // 2.5 AI Classification & Entity Extraction Service (Gemini + Keyword Fallback)
+  const classifiedFetched = await classifyReportsBatch(indiaOnlyFetched);
+
   // Seed baseline mock dataset if DB is empty
   const existingDBReports = queryReports();
   if (existingDBReports.length < 15) {
@@ -88,7 +92,7 @@ export async function runPipeline(): Promise<void> {
   const currentDB = queryReports();
   const validIndiaIds: string[] = [];
 
-  const allReportsToProcess = [...currentDB, ...indiaOnlyFetched];
+  const allReportsToProcess = [...currentDB, ...classifiedFetched];
 
   for (const report of allReportsToProcess) {
     report.headline = cleanText(report.headline);
@@ -117,5 +121,5 @@ export async function runPipeline(): Promise<void> {
   const clusterList = performSmartClustering(updatedReports);
 
   saveClusters(clusterList);
-  console.log(`[Pipeline] ✅ India disaster ingestion complete. ${clusterList.length} incident clusters updated with live representative headlines and severity audit logs in SQLite.`);
+  console.log(`[Pipeline] ✅ India disaster ingestion complete. ${clusterList.length} incident clusters updated with AI classification and severity audit logs in SQLite.`);
 }

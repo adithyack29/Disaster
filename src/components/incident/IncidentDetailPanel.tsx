@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { IncidentCluster } from '../../types/incident';
 import { getSeverityConfig, getCategoryLabel } from '../../lib/severity';
-import { formatTimeAgo, cleanHeadline, cleanText } from '../../lib/utils';
+import { formatTimeAgo, cleanHeadline, cleanText, formatExactTime } from '../../lib/utils';
 import { MiniIncidentMap } from './MiniIncidentMap';
 import { generateAISummary } from '../../lib/gemini';
 import { 
@@ -19,7 +19,9 @@ import {
   Bot,
   Loader2,
   History,
-  Zap
+  Zap,
+  Clock,
+  AlertCircle
 } from 'lucide-react';
 
 interface IncidentDetailPanelProps {
@@ -27,26 +29,65 @@ interface IncidentDetailPanelProps {
   onClose: () => void;
 }
 
+interface BriefMeta {
+  brief: string;
+  generatedAt: string;
+  reportCount: number;
+  source: 'gemini' | 'local_engine';
+  isError?: boolean;
+}
+
 export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluster, onClose }) => {
-  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [briefMeta, setBriefMeta] = useState<BriefMeta | null>(null);
   const [loadingAi, setLoadingAi] = useState<boolean>(false);
-  const [aiSource, setAiSource] = useState<string>('gemini');
 
   useEffect(() => {
-    // Reset AI state when switching active cluster
-    setAiSummary(null);
+    // Reset AI brief state when switching active cluster
+    setBriefMeta(null);
     setLoadingAi(false);
   }, [cluster.clusterId]);
 
   const handleGenerateAiSummary = async () => {
     setLoadingAi(true);
+
+    try {
+      // 1. Try Backend Server API Endpoint first
+      const res = await fetch(`http://127.0.0.1:3001/api/clusters/${cluster.clusterId}/brief`, {
+        method: 'POST',
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setBriefMeta({
+          brief: data.brief,
+          generatedAt: data.generatedAt || new Date().toISOString(),
+          reportCount: data.reportCount || cluster.reports.length,
+          source: data.source || 'gemini',
+        });
+        return;
+      }
+    } catch (err) {
+      console.warn('[IncidentDetailPanel] Backend brief endpoint unreachable. Using client AI engine...');
+    }
+
+    // 2. Client Fallback AI Engine
     try {
       const { brief, source } = await generateAISummary(cluster);
-      setAiSummary(brief);
-      setAiSource(source);
+      setBriefMeta({
+        brief,
+        generatedAt: new Date().toISOString(),
+        reportCount: cluster.reports.length,
+        source: source === 'gemini' ? 'gemini' : 'local_engine',
+      });
     } catch (err) {
       console.error('[IncidentDetailPanel] Failed to generate AI summary:', err);
-      setAiSummary('Unable to generate AI situation brief at this moment. Telemetry dispatches remain active.');
+      setBriefMeta({
+        brief: 'Summary unavailable right now.',
+        generatedAt: new Date().toISOString(),
+        reportCount: cluster.reports.length,
+        source: 'local_engine',
+        isError: true,
+      });
     } finally {
       setLoadingAi(false);
     }
@@ -114,7 +155,7 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
             </span>
           </div>
 
-          {/* Badges Row */}
+          {/* Badges & Explicit Timestamp Labels Row */}
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <span
               className="inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-0.5 rounded text-white uppercase shadow-2xs"
@@ -128,21 +169,33 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
               {categoryLabel}
             </span>
 
-            <span className="text-xs font-mono-data font-semibold text-[#6B7280]">
-              First reported {formatTimeAgo(cluster.firstReportedAt)}
-            </span>
+            {/* Explicit Timestamp Labels (Requirement #4) */}
+            <div className="flex items-center gap-2 text-xs font-mono-data text-[#6B7280]">
+              <span title={`First reported: ${cluster.firstReportedAt}`}>
+                First reported {formatTimeAgo(cluster.firstReportedAt)}
+              </span>
+              <span>•</span>
+              <span className="font-semibold text-[#1E3A5F]" title={`Latest update: ${cluster.lastReportedAt || cluster.firstReportedAt}`}>
+                Latest update {formatTimeAgo(cluster.lastReportedAt || cluster.firstReportedAt)}
+              </span>
+            </div>
           </div>
         </div>
 
         {/* 3. On-Demand AI Situation Brief Section */}
         <div className="pt-2 border-t border-[#E4E7EC]">
-          {!aiSummary ? (
+          {!briefMeta ? (
             <button
               onClick={handleGenerateAiSummary}
-              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-slate-900 to-[#1E3A5F] hover:from-slate-800 hover:to-[#152a45] text-amber-400 font-bold text-xs rounded-xl shadow-xs border border-slate-800 transition-all cursor-pointer group"
+              disabled={loadingAi}
+              className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-gradient-to-r from-slate-900 to-[#1E3A5F] hover:from-slate-800 hover:to-[#152a45] text-amber-400 font-bold text-xs rounded-xl shadow-xs border border-slate-800 transition-all cursor-pointer group disabled:opacity-75"
             >
-              <Sparkles className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
-              <span>VIEW AI SITUATION BRIEF</span>
+              {loadingAi ? (
+                <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+              ) : (
+                <Sparkles className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
+              )}
+              <span>{loadingAi ? 'SYNTHESIZING BRIEF...' : 'VIEW AI SITUATION BRIEF'}</span>
             </button>
           ) : (
             <div className="bg-slate-950 text-white rounded-xl p-4 space-y-2.5 shadow-md border border-slate-800">
@@ -155,25 +208,35 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
                 </div>
                 <span className="inline-flex items-center gap-1 text-[10px] font-mono-data font-semibold text-slate-300 bg-slate-900 px-2 py-0.5 rounded border border-slate-700">
                   <Bot className="w-3 h-3 text-amber-400" />
-                  <span>{aiSource === 'gemini' ? 'Google Gemini 2.5' : 'AI Intel Engine'}</span>
+                  <span>{briefMeta.source === 'gemini' ? 'Google Gemini 1.5' : 'AI Intel Engine'}</span>
                 </span>
               </div>
 
-              {loadingAi ? (
-                <div className="flex items-center justify-center gap-2 py-4 text-xs text-amber-400 font-semibold font-mono-data">
-                  <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
-                  <span>Synthesizing tactical AI situation brief...</span>
+              {briefMeta.isError ? (
+                <div className="flex items-center gap-2 py-2 text-xs text-red-400 font-semibold font-mono-data">
+                  <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                  <span>Summary unavailable right now.</span>
                 </div>
               ) : (
-                <div className="text-xs text-slate-200 leading-relaxed font-sans-ui whitespace-pre-line space-y-1.5">
-                  {aiSummary}
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-200 leading-relaxed font-sans-ui whitespace-pre-line">
+                    {briefMeta.brief}
+                  </p>
+
+                  {/* Persistent Traceability Label (Requirement #3) */}
+                  <div className="pt-2 border-t border-slate-800 text-[10px] font-mono-data text-amber-400/90 flex items-center gap-1">
+                    <Clock className="w-3 h-3 text-amber-400 shrink-0" />
+                    <span>
+                      AI-generated summary — synthesized from {briefMeta.reportCount} source reports, generated at {formatExactTime(briefMeta.generatedAt)}
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
           )}
         </div>
 
-        {/* 3.5 Status Changes & Audit Log (Trust-Building Section) */}
+        {/* 3.5 Status Changes & Audit Log */}
         {cluster.history && cluster.history.length > 0 && (
           <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 space-y-2 text-xs">
             <div className="flex items-center gap-1.5 font-bold text-amber-900 uppercase tracking-wider text-[11px]">
@@ -240,6 +303,12 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
                     {rep.id === cluster.representativeReportId && (
                       <span className="text-[9px] font-mono-data font-bold text-blue-700 bg-blue-100 px-1 py-0.2 rounded">
                         LEAD HEADLINE
+                      </span>
+                    )}
+                    {rep.classificationMethod === 'ai' && (
+                      <span className="text-[9px] font-mono-data font-bold text-indigo-700 bg-indigo-100 px-1 py-0.2 rounded flex items-center gap-0.5">
+                        <Sparkles className="w-2.5 h-2.5 text-indigo-600 shrink-0" />
+                        AI-ASSISTED
                       </span>
                     )}
                   </div>

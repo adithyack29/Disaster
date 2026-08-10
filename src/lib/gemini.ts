@@ -6,85 +6,13 @@ export interface AISummaryResult {
 }
 
 /**
- * Deep Telemetry Synthesis Engine: Analyzes 100% of aggregated reports in detail
+ * Deep Telemetry Synthesis Engine: Ground Truth Synthesizer for Client-Side Use
  */
 export async function generateAISummary(cluster: IncidentCluster): Promise<AISummaryResult> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY;
-
   const headline = cluster.title;
   const place = `${cluster.centerLocation.placeName}, ${cluster.centerLocation.state}`;
-  const category = cluster.category.toUpperCase();
 
-  // Detail every single report in the cluster
-  const reportDetails = cluster.reports.map((r, i) => 
-    `Report #${i + 1} [Source: ${r.source.name} | Type: ${r.source.type.toUpperCase()} | Credibility: ${r.credibilityScore}%]: ${r.headline}. Description: ${r.description || 'No extra detail.'}`
-  ).join('\n');
-
-  // 1. Try Real Google Gemini API if a valid API key is present
-  if (apiKey && apiKey.length > 15 && apiKey.startsWith('AIzaSy')) {
-    const modelsToTry = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
-
-    for (const model of modelsToTry) {
-      try {
-        const prompt = `You are the Chief AI Intelligence Officer for NDRF India Command.
-Analyze ALL ${cluster.reports.length} telemetry reports for this active incident and generate a comprehensive tactical briefing.
-
-INCIDENT METADATA:
-- Title: ${headline}
-- Location: ${place}
-- Category: ${category}
-- Total Analyzed Reports: ${cluster.reports.length}
-
-FULL TELEMETRY STREAM TO ANALYZE:
-${reportDetails}
-
-STRICT INSTRUCTIONS:
-- Analyze information from EVERY SINGLE REPORT provided above.
-- Synthesize all reported facts into a comprehensive, up-to-date tactical briefing.
-- Do NOT fabricate or assume any details not mentioned in the telemetry dispatches.
-- Format cleanly into sections without asterisks (**).
-
-Format:
-Executive Situation Overview:
-(Synthesis of what happened based on all reports)
-
-Key Analyzed Dispatches (${cluster.reports.length} Sources):
-- (Summarize Report 1 with source)
-- (Summarize Report 2 with source)
-
-Current Operation & Resources:
-- Deployed Units & Equipment: (List all equipment/teams mentioned across all reports)
-- Casualties & Affected: (List exact numbers from dispatches or state "Not reported in dispatches")
-
-Ground Action & Next Steps:
-- Immediate Response: (Actions currently taken by agencies)
-- Next Operations: (Stated next steps)`;
-
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-            }),
-          }
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text && text.trim().length > 50) {
-            return { brief: text.trim().replace(/\*\*/g, ''), source: 'gemini' };
-          }
-        }
-      } catch (err) {
-        console.warn(`[Gemini AI] Model ${model} call error:`, err);
-      }
-    }
-  }
-
-  // 2. Deep Telemetry Ground Synthesis Engine (Analyzes 100% of reports dynamically)
+  // Deep Telemetry Ground Synthesis Engine (Analyzes 100% of reports dynamically)
   const reportBreakdowns = cluster.reports.map((r, i) => {
     return `• Dispatch ${i + 1} (${r.source.name}): "${r.headline}" — ${r.description || 'Verified ground update.'}`;
   }).join('\n\n');

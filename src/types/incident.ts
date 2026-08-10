@@ -40,6 +40,7 @@ export interface DisasterReport {
   casualtyEstimate?: number;
   actionRequired?: string;
   imageUrl?: string;
+  classificationMethod?: 'ai' | 'keyword-fallback';
 }
 
 export interface FilterState {

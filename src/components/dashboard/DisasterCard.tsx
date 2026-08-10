@@ -19,7 +19,8 @@ import {
   Cpu,
   UserCheck,
   ArrowRight,
-  Zap
+  Zap,
+  Sparkles
 } from 'lucide-react';
 
 interface DisasterCardProps {
@@ -164,15 +165,25 @@ export const DisasterCard: React.FC<DisasterCardProps> = ({ cluster, onClick }) 
               )}
             </div>
 
-            {/* Latest Report Timestamp */}
-            <span className="text-xs font-mono-data tabular-nums font-semibold text-[#6B7280] shrink-0" title={`Latest reported: ${cluster.lastReportedAt || cluster.firstReportedAt}`}>
-              {formatTimeAgo(cluster.lastReportedAt || cluster.firstReportedAt)}
+            {/* Primary Timestamp explicitly labeled as Updated */}
+            <span className="text-xs font-mono-data tabular-nums font-semibold text-[#6B7280] shrink-0" title={`Last updated: ${cluster.lastReportedAt || cluster.firstReportedAt}`}>
+              Updated {formatTimeAgo(cluster.lastReportedAt || cluster.firstReportedAt)}
             </span>
           </div>
 
-          {/* Visually Distinct Source Tag + Credibility Score Badge */}
+          {/* Visually Distinct Source Tag + AI-Assisted Tag + Credibility Score Badge */}
           <div className="flex items-center gap-2 max-w-full truncate">
             {renderSourceBadge()}
+
+            {leadReport?.classificationMethod === 'ai' && (
+              <span
+                className="text-[10px] font-mono-data font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded shrink-0 flex items-center gap-1"
+                title="Structured entities & signal extracted via Google Gemini AI"
+              >
+                <Sparkles className="w-3 h-3 text-indigo-600 shrink-0" />
+                <span>AI-ASSISTED</span>
+              </span>
+            )}
 
             <span
               className={`text-[11px] font-mono-data tabular-nums font-bold px-2 py-0.5 rounded border shrink-0 ${getCredibilityStyle(score)}`}

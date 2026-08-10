@@ -3,6 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { queryReports, db } from './db';
 import { runPipeline } from './pipeline';
+import { performSmartClustering } from '../src/lib/clustering';
+import { generateAISituationBrief } from './services/aiSituationBrief';
 import type { FilterState, DisasterReport, IncidentCluster, DashboardStats } from '../src/types/incident';
 
 dotenv.config();
@@ -99,29 +101,9 @@ app.get('/api/reports/:id', (req, res) => {
  * GET /api/clusters
  */
 app.get('/api/clusters', (req, res) => {
-  const stmt = db.prepare(`SELECT * FROM clusters ORDER BY lastReportedAt DESC`);
-  const rows = stmt.all() as any[];
-
-  const clusters: IncidentCluster[] = rows.map((row) => ({
-    clusterId: row.clusterId,
-    title: row.title,
-    category: row.category,
-    highestSeverity: row.highestSeverity,
-    reportCount: row.reportCount,
-    reports: [],
-    firstReportedAt: row.firstReportedAt,
-    lastReportedAt: row.lastReportedAt,
-    centerLocation: {
-      lat: row.lat,
-      lng: row.lng,
-      placeName: row.placeName,
-      state: row.state,
-    },
-    totalAffectedEstimate: row.totalAffectedEstimate,
-    imageUrl: row.imageUrl || undefined,
-  }));
-
-  res.json(clusters);
+  const allReports = queryReports();
+  const clusterList = performSmartClustering(allReports);
+  res.json(clusterList);
 });
 
 /**
@@ -135,25 +117,36 @@ app.get('/api/clusters/:clusterId', (req, res) => {
     return res.status(404).json({ error: 'Cluster not found' });
   }
 
-  const sorted = [...clusterReports].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  );
+  const clusters = performSmartClustering(clusterReports);
+  if (clusters.length === 0) {
+    return res.status(404).json({ error: 'Cluster not found' });
+  }
 
-  const cluster: IncidentCluster = {
-    clusterId: req.params.clusterId,
-    title: sorted[0].headline,
-    category: sorted[0].category,
-    highestSeverity: sorted[0].severity,
-    reportCount: sorted.length,
-    reports: sorted,
-    firstReportedAt: sorted[0].timestamp,
-    lastReportedAt: sorted[sorted.length - 1].timestamp,
-    centerLocation: sorted[0].location,
-    totalAffectedEstimate: sorted.reduce((acc, curr) => acc + (curr.affectedPopulationEstimate || 0), 0),
-    imageUrl: sorted.find((r) => r.imageUrl)?.imageUrl,
-  };
+  res.json(clusters[0]);
+});
 
-  res.json(cluster);
+/**
+ * POST /api/clusters/:clusterId/brief (Generate/Retrieve Cached AI Situation Brief)
+ */
+app.post('/api/clusters/:clusterId/brief', async (req, res) => {
+  const all = queryReports();
+  const clusterReports = all.filter((r) => r.clusterId === req.params.clusterId);
+
+  if (clusterReports.length === 0) {
+    return res.status(404).json({ error: 'Cluster not found' });
+  }
+
+  const clusters = performSmartClustering(clusterReports);
+  if (clusters.length === 0) {
+    return res.status(404).json({ error: 'Cluster could not be processed' });
+  }
+
+  try {
+    const briefResult = await generateAISituationBrief(clusters[0]);
+    res.json(briefResult);
+  } catch (err) {
+    res.status(500).json({ error: 'AI Brief generation failed' });
+  }
 });
 
 /**
