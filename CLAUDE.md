@@ -491,10 +491,33 @@ project**: this user's Vercel env vars are consistently `VITE_`-prefixed even fo
 server-only/non-Vite-bundled secrets — check for that prefix first before assuming a key is
 missing, in any new adapter or service that reads `process.env` directly.
 
+### 2026-08-16 (eighth entry) — Verified NewsAPI live + fixed a "complete collapse" political false positive
+Added a third diagnostic (`getLastSourceDiagnostics()` in `server/aggregate.ts`, surfaced as
+`sources` in `api/reports.ts`'s response) exposing per-adapter `fetchedCount`/`status`/`error` —
+same rationale as the Redis/Gemini diagnostics: distinguishes "adapter's key/config is broken"
+from "adapter works but found zero matching real disasters right now" without needing dashboard
+log access. Confirmed via direct curl after the seventh entry's fix deployed: `NewsAPI` now
+returns `fetchedCount: 30` (fix worked), `GNews` still returns `0` (not yet root-caused — could
+be a still-invalid key, could be zero genuine matches; the diagnostic doesn't currently
+distinguish an HTTP-error early-return from a genuinely empty result, unlike the richer Gemini
+diagnostic — a reasonable next improvement if GNews stays at 0 after more checks). Also found and
+fixed a new classifier false positive from the live feed: "'Complete collapse': Tejashwi
+announces Raj Bhavan march over Bihar..." (Bihar opposition-politics story, Tejashwi Yadav is an
+RJD leader) was tagged `building_collapse` off the political idiom "complete collapse." Initial
+fix attempt added the bare phrase `'complete collapse'` to `FORBIDDEN_TERMS` — caught before
+shipping via the same tsx sanity-check pattern used throughout this session: it also blocked a
+genuine test headline ("Complete collapse of 3-story building in Mumbai kills 2"), a real false
+negative, since that's completely natural real-disaster phrasing. Corrected to guard via
+`'tejashwi'`/`'raj bhavan march'` instead — specific enough that a real structural-collapse
+report would never contain either. **Reinforces the standing rule for every `FORBIDDEN_TERMS`
+addition**: always test both directions (the false positive you're fixing AND a plausible real
+disaster headline using similar wording) before committing, not just the case you're fixing.
+
 **Known risk for a live demo, not fully closed**: `classifyCategory`'s bare-substring keyword
 matching still occasionally miscategorizes borderline real news (crime/political stories that
-happen to contain a category keyword as a substring). Two concrete instances found and patched
-via `FORBIDDEN_TERMS` so far ("attacker... kirpan", "gun goes off... injured" — see Investigation
+happen to contain a category keyword as a substring). Instances found and patched via
+`FORBIDDEN_TERMS` so far: "attacker... kirpan", "gun goes off... injured", "storm of hype" (GST
+evasion story), "complete collapse" (Bihar politics) — see Investigation
 Log). Low-severity/low-frequency in testing, but a judge who reads a card closely could notice
 another one; treat any newly reported miscategorization the same way — a targeted
 `FORBIDDEN_TERMS` addition, not a rewrite of the category keyword lists.

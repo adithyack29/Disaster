@@ -185,7 +185,16 @@ export const FORBIDDEN_TERMS = [
   // false positive). 'storm of hype' guards the idiom directly; the GST/investigation terms
   // guard the story's real (non-disaster) subject so this doesn't become word-for-word
   // whack-a-mole against every other idiom containing 'storm'.
-  'storm of hype', 'gst evasion', 'tax evasion', 'anti-corruption enquiry', 'corruption probe'
+  'storm of hype', 'gst evasion', 'tax evasion', 'anti-corruption enquiry', 'corruption probe',
+  // Political-rhetoric idiom: opposition figures describing a government/law-and-order failure
+  // as a "complete collapse" trips the building_collapse category the same way "storm of hype"
+  // tripped cyclone above (see CLAUDE.md Investigation Log 2026-08-16, eighth entry — the
+  // "'Complete collapse': Tejashwi announces Raj Bhavan march..." false positive). Deliberately
+  // does NOT include the bare phrase 'complete collapse' — a genuine building-collapse report
+  // ("Complete collapse of 3-story building in Mumbai") legitimately uses that exact wording, so
+  // blocking it would create false negatives on real disasters. Guards via the specific
+  // politician/venue instead, which a real structural-collapse report would never mention.
+  'tejashwi', 'raj bhavan march'
 ];
 
 /**
