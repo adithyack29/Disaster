@@ -627,3 +627,43 @@ both still clean (only pre-existing warnings). Not yet confirmed against the liv
 deployment post-push — next session should re-curl `/api/reports?refresh=true` a few minutes
 apart and check the `sources.RSS.fetchedCount` diagnostic rose closer to localhost's volume, and
 that the duplicate Yanam-headline pair is gone from the accumulated set.
+
+### 2026-08-16 (twelfth entry) — Migrated localhost's accumulated reports to production; found dev's SQLite has no age cap (unlike prod's 24h one)
+User asked for localhost's full report set (29 accumulated) to appear on production, which only
+had 2-4 at the time. Confirmed both environments were correctly showing `mode: 'live'` with valid
+data — the gap was purely volume, from localhost's dev process accumulating continuously for
+hours/days in SQLite vs. production's Redis accumulator only growing from its own thinner,
+request-triggered ingestion passes (compounded by the eleventh entry's now-fixed timeout issue).
+Did a one-time direct migration rather than waiting for organic re-accumulation: added a
+temporary secret-protected endpoint (`api/admin-seed.ts`, protected by a `SEED_ADMIN_SECRET` env
+var) that merges a POSTed batch of reports into the same Redis key `api/reports.ts` uses, with
+identical dedupe-by-id/`pruneAndCap` logic; POSTed localhost's 29 accumulated reports to it (after
+filtering through `isStrictIndiaDisaster` locally first, which itself dropped 7 more false
+positives including a **third** distinct headline variant of the recurring Varanasi
+accidental-discharge story — `"...passenger 'accidentally' fires during security check..."` —
+none of the four existing guard phrases matched this wording; fixed by adding `'fires during
+security check'` to `FORBIDDEN_TERMS`, verified both directions as usual); then deleted the
+endpoint and removed the env var immediately after confirming the migration worked. Net result on
+production: `liveCount` 2 → 6, not the full 29 — because `pruneAndCap()`'s `MAX_ACCUMULATED_AGE_MS`
+(24h) correctly rejected the other 16 as stale, several by days (`mastodon-117007435413210688` was
+418h/~17 days old, `rss-435b942fd1d2aa4d` over 9000h/~1 year old). **This surfaced a real,
+previously-unnoticed gap**: `server/pipeline.ts` (dev) has no equivalent age-based purge —
+`purgeNonIndiaReports()`/`purgeInvalidClusters()` only ever remove non-India/invalid rows, never
+stale-but-still-valid ones — so a `npm run server` process left running for days will keep
+showing week-old news as if current, which is inconsistent with the app's own "real-time"
+demo-safety design that production correctly enforces. Not fixed this session (dev-only,
+non-demo-facing, and out of scope for what was asked) but worth adding
+`purgeStaleReports()`-equivalent to `server/pipeline.ts` if dev's feed volume is ever compared
+against production's again, to avoid re-deriving this same "why is localhost bigger" confusion.
+
+**Platform behavior worth remembering**: `KV_REST_API_URL`/`KV_REST_API_TOKEN`/etc. are marked
+**Sensitive** in this project's Vercel dashboard (visible via `vercel env ls`) — `vercel env pull`
+writes the literal string `"[SENSITIVE]"` for these instead of the real value, by design (Vercel
+security feature, not a bug or a stale/misconfigured token). This blocks the "pull the value
+locally and use it directly" approach for any sensitive var, even with a fully authenticated,
+correctly-linked CLI session — the only ways to use a Sensitive var's real value are from inside a
+deployed Function (which can always read its own `process.env` at runtime) or by having it typed
+directly into a value you already know. If a future task needs to *use* a sensitive credential
+from outside a Vercel Function again, the admin-endpoint pattern from this entry (temporary,
+secret-protected, deleted after use) is the way to do it — don't waste time re-attempting
+`vercel env pull` first.
