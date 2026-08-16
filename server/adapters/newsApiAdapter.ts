@@ -3,7 +3,10 @@ import { calculateCredibility, inferSeverity, extractLocation, classifyCategory 
 import { hashId } from '../hashId.js';
 
 export async function fetchNewsAPIReports(): Promise<DisasterReport[]> {
-  const apiKey = process.env.NEWSAPI_KEY;
+  // Checks both naming conventions — this project's Vercel env vars use VITE_NEWS_API_KEY
+  // (confirmed via the project's Environment Variables screen), not NEWSAPI_KEY, the same
+  // mismatch pattern found for Gemini/Redis (see CLAUDE.md Investigation Log 2026-08-16).
+  const apiKey = process.env.NEWSAPI_KEY || process.env.VITE_NEWS_API_KEY;
   if (!apiKey || apiKey.trim() === '') {
     return [];
   }

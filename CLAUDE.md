@@ -470,6 +470,27 @@ showed `classificationMethod: 'keyword-fallback'`. Not yet root-caused — next 
 check Vercel Function Logs for `[AI Classifier]` warnings (circuit breaker trips, Gemini API
 errors) once the Redis fix is confirmed live, rather than assume the key itself is the problem.
 
+### 2026-08-16 (seventh entry) — Gemini quota exhausted (not a bug); NewsAPI/GNews had the same VITE_-prefix env var mismatch as Gemini
+Root-caused the "AI classification never runs" mystery from the sixth entry by adding a
+diagnostic (`getAIClassifierDiagnostic()` in `server/services/aiClassifier.ts`, surfaced via
+`api/reports.ts`'s response as `aiClassifier`) rather than guessing further: `keyPresent: true`,
+`keyLength: 53` (key is fine) but `circuitBreakerOpen: true`, `lastGeminiError` a 429 —
+**`gemini-flash-latest` currently resolves to `gemini-3.7-flash`, whose free tier caps at 20
+requests/day**, already exhausted by testing during this session. Not a code bug — the
+keyword-fallback path is the documented, correct degradation, and severity/credibility were
+always rule-based regardless (see "AI explains, rules decide" in the top-level principles).
+Self-resolves on the daily quota reset; sustained AI classification for an actual demo day needs
+billing enabled on that Gemini key. User then asked to add real volume via NewsAPI/GNews and
+pasted a second Environment Variables screenshot: same mismatch pattern as Gemini/Redis — the
+keys exist as `VITE_NEWS_API_KEY` and `VITE_GNEWS_API_KEY`, but unlike
+`server/services/aiClassifier.ts` (which already had a `VITE_GEMINI_API_KEY` fallback),
+`server/adapters/newsApiAdapter.ts` and `gnewsAdapter.ts` only checked the un-prefixed
+`NEWSAPI_KEY`/`GNEWS_KEY` — a real, fixable code bug this time, not a dashboard action. Fixed by
+adding the same `|| process.env.VITE_*` fallback pattern to both adapters. **Takeaway for this
+project**: this user's Vercel env vars are consistently `VITE_`-prefixed even for
+server-only/non-Vite-bundled secrets — check for that prefix first before assuming a key is
+missing, in any new adapter or service that reads `process.env` directly.
+
 **Known risk for a live demo, not fully closed**: `classifyCategory`'s bare-substring keyword
 matching still occasionally miscategorizes borderline real news (crime/political stories that
 happen to contain a category keyword as a substring). Two concrete instances found and patched
