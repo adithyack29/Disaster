@@ -27,3 +27,5 @@ server/*.db-wal
 *.njsproj
 *.sln
 *.sw?
+.vercel
+.env*
