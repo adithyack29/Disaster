@@ -178,7 +178,14 @@ export const FORBIDDEN_TERMS = [
   // "attacker... kirpan" case did above, despite being a security incident, not a disaster
   // dispatch (see CLAUDE.md Investigation Log 2026-08-16, fourth entry).
   'gun went off', 'gun goes off', 'accidental discharge', 'accidentally discharged',
-  'weapon discharge', 'firearm discharge'
+  'weapon discharge', 'firearm discharge',
+  // Financial-crime/investigation stories can trip the cyclone category's 'storm' keyword via
+  // idiomatic use ("a storm of hype") rather than an actual weather event (see CLAUDE.md
+  // Investigation Log 2026-08-16, fifth/sixth entries — the "GST evasion probe into Messi..."
+  // false positive). 'storm of hype' guards the idiom directly; the GST/investigation terms
+  // guard the story's real (non-disaster) subject so this doesn't become word-for-word
+  // whack-a-mole against every other idiom containing 'storm'.
+  'storm of hype', 'gst evasion', 'tax evasion', 'anti-corruption enquiry', 'corruption probe'
 ];
 
 /**

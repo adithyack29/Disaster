@@ -141,5 +141,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   res.setHeader('Cache-Control', 'no-store');
-  res.status(200).json(cache!.payload);
+  // accumulatorBackend is diagnostic-only (not part of the documented contract) — lets us tell
+  // from outside whether UPSTASH_REDIS_REST_URL/TOKEN are actually configured for this
+  // deployment without needing dashboard/log access. Safe to remove once Redis persistence is
+  // confirmed working end-to-end (see CLAUDE.md Investigation Log 2026-08-16, sixth entry).
+  res.status(200).json({ ...cache!.payload, accumulatorBackend: redis ? 'redis' : 'memory' });
 }
