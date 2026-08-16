@@ -219,6 +219,7 @@ export const FORBIDDEN_TERMS = [
   // entry. Adding the specific recurring phrasings/venue markers rather than broadening to bare
   // 'firing', which would be far too aggressive (could match legitimate disaster-response terms).
   'gun going off', 'accidental firing', 'airport firing', 'screeners', 'aaiclas',
+  'fires during security check',
   // Attack/assassination-attempt follow-up story using different wording than the existing
   // 'assassination'/'attacker'/'shot at' guards (see first entry) — a political leader's
   // hospital discharge update, not a natural/civil disaster.
