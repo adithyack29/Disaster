@@ -30,6 +30,24 @@ let circuitBreakerOpen = false;
 let circuitBreakerTrippedUntil = 0;
 let consecutiveFailures = 0;
 
+// Diagnostic-only state so callers (e.g. api/reports.ts) can report why Gemini classification
+// isn't running without needing Vercel Function Logs access — see CLAUDE.md Investigation Log
+// 2026-08-16, sixth entry (the "VITE_GEMINI_API_KEY is set but classificationMethod is always
+// keyword-fallback" mystery). Safe to remove once root-caused.
+let lastGeminiError: string | null = null;
+
+export function getAIClassifierDiagnostic() {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+  return {
+    keyPresent: Boolean(apiKey),
+    keyLength: apiKey ? apiKey.length : 0,
+    circuitBreakerOpen,
+    circuitBreakerTrippedUntil: circuitBreakerOpen ? new Date(circuitBreakerTrippedUntil).toISOString() : null,
+    consecutiveFailures,
+    lastGeminiError,
+  };
+}
+
 function isCircuitBreakerOpen(): boolean {
   if (!circuitBreakerOpen) return false;
   if (Date.now() > circuitBreakerTrippedUntil) {
@@ -179,6 +197,7 @@ ${JSON.stringify(promptItems, null, 2)}`;
     }
   } catch (error) {
     console.error('[AI Classifier] Gemini API batch classification failed:', error);
+    lastGeminiError = error instanceof Error ? error.message : String(error);
     recordFailure();
 
     // Fall back to keyword classification for all uncached reports

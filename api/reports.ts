@@ -3,6 +3,7 @@ import { Redis } from '@upstash/redis';
 import type { DisasterReport } from '../src/types/incident.js';
 import { aggregateAndClassify } from '../server/aggregate.js';
 import { getFreshMockReports } from '../src/data/mockReports.js';
+import { getAIClassifierDiagnostic } from '../server/services/aiClassifier.js';
 
 const CACHE_TTL_MS = 2 * 60 * 1000;
 
@@ -149,9 +150,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   res.setHeader('Cache-Control', 'no-store');
-  // accumulatorBackend is diagnostic-only (not part of the documented contract) — lets us tell
-  // from outside whether UPSTASH_REDIS_REST_URL/TOKEN are actually configured for this
-  // deployment without needing dashboard/log access. Safe to remove once Redis persistence is
-  // confirmed working end-to-end (see CLAUDE.md Investigation Log 2026-08-16, sixth entry).
-  res.status(200).json({ ...cache!.payload, accumulatorBackend: redis ? 'redis' : 'memory' });
+  // accumulatorBackend/aiClassifier are diagnostic-only (not part of the documented contract) —
+  // let us tell from outside whether Redis/Gemini are actually configured for this deployment
+  // without needing dashboard/log access. Safe to remove once both are confirmed working
+  // end-to-end (see CLAUDE.md Investigation Log 2026-08-16, sixth entry).
+  res.status(200).json({
+    ...cache!.payload,
+    accumulatorBackend: redis ? 'redis' : 'memory',
+    aiClassifier: getAIClassifierDiagnostic(),
+  });
 }
