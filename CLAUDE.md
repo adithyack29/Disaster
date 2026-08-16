@@ -261,7 +261,11 @@ and `CategoryFilterBar`/`DisasterCardGrid` respectively.
    Redis (survives cold starts, shared across instances) rather than plain module-scope state —
    see `mergeLiveReports()` in `api/reports.ts`. If you touch `api/reports.ts` again, preserve
    this merge-not-replace behavior — reverting to a full-replace cache silently reintroduces the
-   "production never updates" bug.
+   "production never updates" bug. **Also preserve `pruneAndCap()`'s re-validation of already-
+   accumulated reports against `isStrictIndiaDisaster`** (added in the tenth entry) — without it,
+   a report classified before a `FORBIDDEN_TERMS`/`CATEGORY_CHECK_ORDER` fix ships stays visible
+   in production forever afterward, since merges only ever add new reports, never re-check old
+   ones against updated rules.
 8. **Every relative import in `api/**/*.ts` and `server/**/*.ts` (and any `src/` file they
    import, e.g. `src/types/incident.ts`, `src/data/mockReports.ts`) MUST use an explicit `.js`
    extension** (`import x from './foo.js'`, referencing a `.ts` file on disk — standard TS/Node
@@ -554,6 +558,26 @@ tripping the cyclone category off a bike model literally named "Cyclone." All fi
 pipeline (`aggregateAndClassify()`) verified end-to-end afterward via the same tsx-script
 pattern: one run returned 12 genuine reports, mostly a real cluster of Kerala/Karnataka/Mumbai
 landslide and flood news from a legitimate outlet's (`@Mathrubhumi_English`) Mastodon account.
+
+### 2026-08-16 (tenth entry) — Accumulator had no purge step: a fixed false positive stayed stuck in production for hours
+User reported "not ingested" after the ninth entry's fixes deployed — the dashboard still showed
+the exact "'Complete collapse': Tejashwi announces Raj Bhavan march..." card that had been fixed
+hours earlier (commit `9003847`). Diagnosed via the `sources`/full-payload diagnostics: GNews
+confirmed quota-exhausted (`403`, "reached your request limit for today" — expected, not a bug,
+same class as Gemini's quota exhaustion in the seventh entry), and every other source was
+fetching normally — so the classifier fix itself was fine, but gotcha #7's `mergeLiveReports()`
+only ever validates *newly fetched* reports against `isStrictIndiaDisaster`; it never re-checks
+what's already sitting in the Redis-persisted accumulated set. A report accumulated *before* a
+`FORBIDDEN_TERMS` fix ships stays in Redis forever afterward — merges only ever add, never purge
+against updated rules. This is exactly the gap `server/pipeline.ts`'s
+`purgeNonIndiaReports()`/`purgeInvalidClusters()` closes for dev's SQLite, which `api/reports.ts`
+never had an equivalent for. Fixed by re-validating every accumulated report (not just fresh
+fetches) against `isStrictIndiaDisaster` inside `pruneAndCap()` on every merge — see the comment
+there for the mechanism. **This means any future classifier fix (new `FORBIDDEN_TERMS` entry,
+`CATEGORY_CHECK_ORDER` change, etc.) will now automatically flush already-accumulated reports
+that no longer pass, on the very next `?refresh=true` or cache-expiry cycle — no manual
+Redis-clearing needed.** If you ever touch `pruneAndCap()` again, preserve this re-validation
+step; removing it silently reintroduces "a fixed false positive stays visible forever" bugs.
 
 **Known risk for a live demo, not fully closed**: `classifyCategory`'s bare-substring keyword
 matching still occasionally miscategorizes borderline real news (crime/political/viral/

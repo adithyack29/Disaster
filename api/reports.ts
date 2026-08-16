@@ -4,6 +4,7 @@ import type { DisasterReport } from '../src/types/incident.js';
 import { aggregateAndClassify, getLastSourceDiagnostics } from '../server/aggregate.js';
 import { getFreshMockReports } from '../src/data/mockReports.js';
 import { getAIClassifierDiagnostic } from '../server/services/aiClassifier.js';
+import { isStrictIndiaDisaster } from '../server/classifier.js';
 
 const CACHE_TTL_MS = 2 * 60 * 1000;
 
@@ -66,9 +67,21 @@ function dedupeByHeadlineMap(reports: DisasterReport[]): Map<string, DisasterRep
   return map;
 }
 
+// Re-validates every accumulated report (not just freshly-fetched ones) against the *current*
+// isStrictIndiaDisaster rules on every merge — the serverless analog of
+// server/pipeline.ts's purgeNonIndiaReports()/purgeInvalidClusters() sweeping dev's SQLite.
+// Without this, a report that was wrongly classified before a FORBIDDEN_TERMS fix shipped stays
+// stuck in Redis forever: mergeLiveReports() only ever filters *new* fetches through
+// aggregateAndClassify(), it never re-checks what's already accumulated. Concretely: the
+// "'Complete collapse': Tejashwi..." false positive (fixed in commit 9003847) was still showing
+// up on production hours after the fix deployed, because it had been accumulated into Redis
+// before the fix shipped and nothing ever re-validated it — see CLAUDE.md Investigation Log
+// 2026-08-16, tenth entry.
 function pruneAndCap(reports: DisasterReport[]): DisasterReport[] {
   const cutoff = Date.now() - MAX_ACCUMULATED_AGE_MS;
-  const fresh = reports.filter((r) => new Date(r.timestamp).getTime() >= cutoff);
+  const fresh = reports.filter(
+    (r) => new Date(r.timestamp).getTime() >= cutoff && isStrictIndiaDisaster(r.headline, r.description)
+  );
   fresh.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   fresh.length = Math.min(fresh.length, MAX_ACCUMULATED_REPORTS);
   return fresh;
