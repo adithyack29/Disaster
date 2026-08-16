@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { generateAISituationBrief } from '../server/services/aiSituationBrief';
+import { generateAISituationBrief } from '../server/services/aiSituationBrief.js';
 
 /**
  * Generates (or returns a cached) AI situation brief for a cluster. The client computes and

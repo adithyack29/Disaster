@@ -1,6 +1,6 @@
 import Parser from 'rss-parser';
-import type { DisasterReport, CategoryType } from '../../src/types/incident';
-import { calculateCredibility, inferSeverity, extractLocation, classifyCategory } from '../classifier';
+import type { DisasterReport, CategoryType } from '../../src/types/incident.js';
+import { calculateCredibility, inferSeverity, extractLocation, classifyCategory } from '../classifier.js';
 
 const parser = new Parser({
   headers: {

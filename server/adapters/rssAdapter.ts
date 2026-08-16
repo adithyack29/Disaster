@@ -1,7 +1,7 @@
 import Parser from 'rss-parser';
-import type { DisasterReport } from '../../src/types/incident';
-import { calculateCredibility, inferSeverity, extractLocation, classifyCategory, isStrictIndiaDisaster, cleanText } from '../classifier';
-import { hashId } from '../hashId';
+import type { DisasterReport } from '../../src/types/incident.js';
+import { calculateCredibility, inferSeverity, extractLocation, classifyCategory, isStrictIndiaDisaster, cleanText } from '../classifier.js';
+import { hashId } from '../hashId.js';
 
 const parser = new Parser({
   timeout: 6000,

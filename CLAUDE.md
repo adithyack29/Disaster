@@ -227,6 +227,15 @@ and `CategoryFilterBar`/`DisasterCardGrid` respectively.
 4. **`api/reports.ts`'s in-memory cache is per-warm-instance, not global** — different concurrent
    Vercel instances can briefly disagree. Fine for this app; would need shared storage
    (Redis/KV) if strict cross-instance consistency ever mattered.
+5. **Forgetting to invalidate the client cache / add a store field to `DashboardPage`'s effect
+   deps silently breaks a toggle** that should cause an immediate refetch — happened with the
+   Demo Mode toggle (badge changed, data didn't) before being caught by actually testing it, not
+   just checking the build succeeded. If you add a new toggle that should change what
+   `/api/reports` (or the fallback chain) returns, make sure something actually re-triggers the
+   fetch effect, and verify it visually, not just structurally.
+6. **`server/disaster.db*` are gitignored** (`db`, `-shm`, `-wal` all three, since 2026-08-16 —
+   previously only `-shm`/`-wal` were tracked while `.db` wasn't, which caused a real corruption
+   incident, see Investigation Log 2026-08-15 second entry).
 7. **`api/reports.ts` must accumulate live reports across cache cycles, not just cache the
    latest pass.** A single ingestion pass (8s-per-source timeout across 10 sources, sparse
    real-time India disaster news) very often finds zero *new* items — that's normal, not a
@@ -240,15 +249,22 @@ and `CategoryFilterBar`/`DisasterCardGrid` respectively.
    *never* accumulated a single live report. If you touch `api/reports.ts` again, preserve this
    merge — reverting to a full-replace cache silently reintroduces the "production never
    updates" bug.
-5. **Forgetting to invalidate the client cache / add a store field to `DashboardPage`'s effect
-   deps silently breaks a toggle** that should cause an immediate refetch — happened with the
-   Demo Mode toggle (badge changed, data didn't) before being caught by actually testing it, not
-   just checking the build succeeded. If you add a new toggle that should change what
-   `/api/reports` (or the fallback chain) returns, make sure something actually re-triggers the
-   fetch effect, and verify it visually, not just structurally.
-6. **`server/disaster.db*` are gitignored** (`db`, `-shm`, `-wal` all three, since 2026-08-16 —
-   previously only `-shm`/`-wal` were tracked while `.db` wasn't, which caused a real corruption
-   incident, see Investigation Log 2026-08-15 second entry).
+8. **Every relative import in `api/**/*.ts` and `server/**/*.ts` (and any `src/` file they
+   import, e.g. `src/types/incident.ts`, `src/data/mockReports.ts`) MUST use an explicit `.js`
+   extension** (`import x from './foo.js'`, referencing a `.ts` file on disk — standard TS/Node
+   ESM convention, not a typo). `package.json` has `"type": "module"`, so Vercel's function
+   builder type-checks these files under `module`/`moduleResolution: nodenext`, which makes
+   extensionless relative imports a hard build error (`TS2835`) — **the whole Vercel deployment
+   silently fails to build**, with no visible symptom beyond "the site never picks up new code"
+   (see Investigation Log 2026-08-16, third entry — this is what made gotcha #7's fix a no-op
+   until this was also fixed). Invisible locally: `api/`/`server/` aren't covered by any
+   tsconfig (`tsconfig.app.json` only covers `src/`, and uses `moduleResolution: bundler`, which
+   doesn't require extensions), and `npm run server` runs via `tsx`, which doesn't type-check at
+   all. Before pushing any change to `api/`/`server/` imports, verify Vercel-mode resolution with
+   a throwaway tsconfig (`module`/`moduleResolution: "nodenext"`, `include` the touched files) —
+   see the Investigation Log entry for the exact command. Frontend-only files (`src/pages`,
+   `src/components`, `src/store`, etc.) are never touched by the Vercel function build, so leave
+   their imports extensionless as before.
 
 ## Investigation log
 
@@ -341,6 +357,33 @@ as gotcha #4) but persists across the far more common case of a warm instance se
 requests. Not yet verified against an actual Vercel deployment (no `vercel` CLI / linked project
 in this environment) — verify post-deploy that `mode` reads `'live'` and headlines actually
 rotate over a 10+ minute observation window, not just that the build succeeds.
+
+### 2026-08-16 (third entry) — Why gotcha #7's fix didn't change anything: the build was never deploying
+User reported the fix from the second entry made no visible difference — same static headlines,
+same order, same relative timestamps, pixel-identical to the pre-fix screenshot. Asked the user
+to check the Vercel deployment; they pasted the actual build log, which explained everything:
+every relative import under `api/`/`server/` (and the `src/` files they import) was failing
+TypeScript's `TS2835` ("relative import paths need explicit file extensions") under
+`moduleResolution: nodenext` — which is what Vercel's function builder uses because
+`package.json` declares `"type": "module"`. **The build has been failing on every deployment**
+since the Vercel functions were introduced (2026-08-15), so the site was serving whatever the
+last *successful* build was — none of the fixes from either of today's earlier entries, nor
+likely anything from the 2026-08-15 session, had ever actually gone live. `npx tsc -b` locally
+reported zero errors the whole time because `api/`/`server/` are outside every local tsconfig's
+`include` (see gotcha #8). Fixed by adding explicit `.js` extensions to every relative import in
+`api/reports.ts`, `api/situation-brief.ts`, `server/aggregate.ts`, `server/classifier.ts`,
+`server/hashId.ts`'s importers, `server/services/{aiClassifier,aiSituationBrief}.ts`, all 10
+`server/adapters/*.ts`, and `src/data/mockReports.ts` (the only `src/` file in the import chain
+besides the type-only `src/types/incident.ts`, which has no imports of its own). Verified two
+ways: (1) a throwaway tsconfig reproducing Vercel's exact settings —
+`{"compilerOptions":{"module":"nodenext","moduleResolution":"nodenext","target":"es2022","skipLibCheck":true,"esModuleInterop":true,"resolveJsonModule":true,"noEmit":true,"types":["node"]},"include":["api/reports.ts","api/situation-brief.ts"]}`
+— run via `npx tsc --noEmit -p <that file>`, zero errors after the fix, reproduced the exact
+Vercel errors before it; (2) `npm run build` (the real frontend build) still succeeds, confirming
+Vite/esbuild correctly resolves the now-`.js`-suffixed specifiers back to their `.ts` source
+files for the files shared with the client bundle. Not yet confirmed against a live Vercel
+deployment (no `vercel` CLI / linked project in this environment) — the next session should
+verify the Vercel dashboard shows a successful build for this commit and that `mode` reads
+`'live'` with rotating headlines, not just that these local checks pass.
 
 **Known risk for a live demo, not fully closed**: `classifyCategory`'s bare-substring keyword
 matching still occasionally miscategorizes borderline real news (crime/political stories that

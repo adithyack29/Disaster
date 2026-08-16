@@ -1,5 +1,5 @@
-import type { DisasterReport, CategoryType } from '../../src/types/incident';
-import { calculateCredibility, inferSeverity, extractLocation } from '../classifier';
+import type { DisasterReport, CategoryType } from '../../src/types/incident.js';
+import { calculateCredibility, inferSeverity, extractLocation } from '../classifier.js';
 
 export async function fetchEONETReports(): Promise<DisasterReport[]> {
   try {

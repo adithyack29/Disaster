@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import type { DisasterReport } from '../src/types/incident';
-import { aggregateAndClassify } from '../server/aggregate';
-import { getFreshMockReports } from '../src/data/mockReports';
+import type { DisasterReport } from '../src/types/incident.js';
+import { aggregateAndClassify } from '../server/aggregate.js';
+import { getFreshMockReports } from '../src/data/mockReports.js';
 
 const CACHE_TTL_MS = 2 * 60 * 1000;
 

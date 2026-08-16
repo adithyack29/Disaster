@@ -1,4 +1,4 @@
-import type { DisasterReport } from '../types/incident';
+import type { DisasterReport } from '../types/incident.js';
 
 const HOUR = 3600 * 1000;
 const MINUTE = 60 * 1000;

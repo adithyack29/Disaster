@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import crypto from 'crypto';
-import type { IncidentCluster } from '../../src/types/incident';
+import type { IncidentCluster } from '../../src/types/incident.js';
 
 export interface AISituationBriefResponse {
   brief: string;

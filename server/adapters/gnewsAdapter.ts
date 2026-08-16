@@ -1,6 +1,6 @@
-import type { DisasterReport } from '../../src/types/incident';
-import { calculateCredibility, inferSeverity, extractLocation, classifyCategory } from '../classifier';
-import { hashId } from '../hashId';
+import type { DisasterReport } from '../../src/types/incident.js';
+import { calculateCredibility, inferSeverity, extractLocation, classifyCategory } from '../classifier.js';
+import { hashId } from '../hashId.js';
 
 export async function fetchGNewsReports(): Promise<DisasterReport[]> {
   const apiKey = process.env.GNEWS_KEY;

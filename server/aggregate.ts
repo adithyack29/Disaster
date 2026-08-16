@@ -1,16 +1,16 @@
-import type { DisasterReport } from '../src/types/incident';
-import { cleanText, isStrictIndiaDisaster } from './classifier';
-import { classifyReportsBatch } from './services/aiClassifier';
-import { fetchUSGSReports } from './adapters/usgsAdapter';
-import { fetchEONETReports } from './adapters/eonetAdapter';
-import { fetchGDACSReports } from './adapters/gdacsAdapter';
-import { fetchReliefWebReports } from './adapters/reliefwebAdapter';
-import { fetchMastodonReports } from './adapters/mastodonAdapter';
-import { fetchBlueskyReports } from './adapters/blueskyAdapter';
-import { fetchRSSReports } from './adapters/rssAdapter';
-import { fetchRedditReports } from './adapters/redditAdapter';
-import { fetchNewsAPIReports } from './adapters/newsApiAdapter';
-import { fetchGNewsReports } from './adapters/gnewsAdapter';
+import type { DisasterReport } from '../src/types/incident.js';
+import { cleanText, isStrictIndiaDisaster } from './classifier.js';
+import { classifyReportsBatch } from './services/aiClassifier.js';
+import { fetchUSGSReports } from './adapters/usgsAdapter.js';
+import { fetchEONETReports } from './adapters/eonetAdapter.js';
+import { fetchGDACSReports } from './adapters/gdacsAdapter.js';
+import { fetchReliefWebReports } from './adapters/reliefwebAdapter.js';
+import { fetchMastodonReports } from './adapters/mastodonAdapter.js';
+import { fetchBlueskyReports } from './adapters/blueskyAdapter.js';
+import { fetchRSSReports } from './adapters/rssAdapter.js';
+import { fetchRedditReports } from './adapters/redditAdapter.js';
+import { fetchNewsAPIReports } from './adapters/newsApiAdapter.js';
+import { fetchGNewsReports } from './adapters/gnewsAdapter.js';
 
 const SOURCE_TIMEOUT_MS = 8000;
 

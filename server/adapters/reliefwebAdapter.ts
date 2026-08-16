@@ -1,5 +1,5 @@
-import type { DisasterReport } from '../../src/types/incident';
-import { calculateCredibility, inferSeverity, extractLocation, classifyCategory } from '../classifier';
+import type { DisasterReport } from '../../src/types/incident.js';
+import { calculateCredibility, inferSeverity, extractLocation, classifyCategory } from '../classifier.js';
 
 export async function fetchReliefWebReports(): Promise<DisasterReport[]> {
   try {

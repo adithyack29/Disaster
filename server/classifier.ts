@@ -1,4 +1,4 @@
-import type { CategoryType, SeverityLevel, LocationInfo, ReportSource } from '../src/types/incident';
+import type { CategoryType, SeverityLevel, LocationInfo, ReportSource } from '../src/types/incident.js';
 
 /**
  * Whole-word/whole-phrase match — NOT `.includes()`. A bare substring check matches inside

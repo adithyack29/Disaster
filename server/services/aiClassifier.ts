@@ -1,8 +1,8 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import crypto from 'crypto';
 import { z } from 'zod';
-import type { DisasterReport, CategoryType, SeverityLevel } from '../../src/types/incident';
-import { classifyCategory, inferSeverity } from '../classifier';
+import type { DisasterReport, CategoryType, SeverityLevel } from '../../src/types/incident.js';
+import { classifyCategory, inferSeverity } from '../classifier.js';
 
 // 1. Zod Validation Schema for Gemini Structured Output
 export const AIClassificationSchema = z.object({
