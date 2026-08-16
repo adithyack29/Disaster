@@ -172,7 +172,13 @@ export const FORBIDDEN_TERMS = [
   // so they were passing classifyCategory('medical') despite not being a disaster (see CLAUDE.md
   // Investigation Log 2026-08-16, the "attacker... kirpan" false positive).
   'attacker', 'assassination', 'assassin', 'gunman', 'stabbed', 'stabbing', 'kirpan attack',
-  'shot at', 'shooting incident', 'murder', 'homicide'
+  'shot at', 'shooting incident', 'murder', 'homicide',
+  // Accidental-firearm-discharge stories ("flyer's gun goes off at airport") legitimately
+  // mention 'injured'/'security staff' — passed classifyCategory('medical') the same way the
+  // "attacker... kirpan" case did above, despite being a security incident, not a disaster
+  // dispatch (see CLAUDE.md Investigation Log 2026-08-16, fourth entry).
+  'gun went off', 'gun goes off', 'accidental discharge', 'accidentally discharged',
+  'weapon discharge', 'firearm discharge'
 ];
 
 /**

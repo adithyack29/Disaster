@@ -385,7 +385,29 @@ deployment (no `vercel` CLI / linked project in this environment) — the next s
 verify the Vercel dashboard shows a successful build for this commit and that `mode` reads
 `'live'` with rotating headlines, not just that these local checks pass.
 
+### 2026-08-16 (fourth entry) — Confirmed live in production; one FORBIDDEN_TERMS false positive fixed
+Verified the gotcha #7/#8 fixes actually worked by curling `https://ndrfdisaster.vercel.app/api/reports?refresh=true` directly: `mode: "live"`, `liveCount: 2`, real RSS-ingested reports from The
+Hindu and NDTV. User confirmed the dashboard itself also showed `LIVE (2)` with those same two
+cards after a hard refresh — the production "stuck on demo" issue from entries two and three is
+resolved. Thin feed (2 reports) is expected/correct behavior, not a bug — most of the 10 sources
+just had no India-disaster content on that particular pass; per the demo-safety design this is
+still honestly shown as `live`, never padded. One of the two live reports was a real miscategorization: "Air India Express Flyer's Gun Goes Off At Varanasi Airport, 2 Security
+Staffers Injured" (an accidental-discharge security incident, not a disaster) passed
+`isStrictIndiaDisaster` and got tagged `medical` off the word "injured" — the same class of bug
+as the "attacker... kirpan" case from 2026-08-16's first entry. Fixed the same way: added
+targeted phrases to `FORBIDDEN_TERMS` in `server/classifier.ts` (`'gun went off'`, `'gun goes
+off'`, `'accidental discharge'`, `'accidentally discharged'`, `'weapon discharge'`, `'firearm
+discharge'`) rather than touching the broad `medical` keyword list itself. Verified via a
+throwaway `tsx -e` script: the exact headline/description now returns `false` from
+`isStrictIndiaDisaster`, while real flood/fire headlines still return `true`. This is a
+whack-a-mole pattern, not a permanent fix — see Coding Standards' note on `.includes()`-style
+keyword matching being only partially fixed; expect more of these one-off `FORBIDDEN_TERMS`
+additions as new false-positive story types surface.
+
 **Known risk for a live demo, not fully closed**: `classifyCategory`'s bare-substring keyword
 matching still occasionally miscategorizes borderline real news (crime/political stories that
-happen to contain a category keyword as a substring, e.g. "attacker") — see Coding Standards.
-Low-severity/low-frequency in testing, but a judge who reads a card closely could notice one.
+happen to contain a category keyword as a substring). Two concrete instances found and patched
+via `FORBIDDEN_TERMS` so far ("attacker... kirpan", "gun goes off... injured" — see Investigation
+Log). Low-severity/low-frequency in testing, but a judge who reads a card closely could notice
+another one; treat any newly reported miscategorization the same way — a targeted
+`FORBIDDEN_TERMS` addition, not a rewrite of the category keyword lists.
