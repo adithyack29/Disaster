@@ -11,7 +11,14 @@ const parser = new Parser({
   },
 });
 
-// Comprehensive list of reliable public Indian disaster & news RSS feeds
+// Comprehensive list of reliable public Indian disaster & news RSS feeds. Each URL was verified
+// live end-to-end (actually fetched and parsed through rss-parser, not just curled — a curl
+// with a browser User-Agent can succeed while rss-parser's Node HTTP client still gets blocked
+// by TLS-fingerprint-based bot detection, which is exactly what happened with Zee News and DNA
+// India below) before being added — see CLAUDE.md Investigation Log 2026-08-16, ninth entry.
+// Candidates that 403'd, 404'd, or redirected to a non-feed page (oneindia.com,
+// deccanherald.com, aninews.in, livehindustan.com, theprint.in, zeenews.india.com,
+// dnaindia.com) were deliberately left out rather than added speculatively.
 const RSS_FEEDS = [
   { url: 'https://www.thehindu.com/news/national/feeder/default.rss', name: 'The Hindu National' },
   { url: 'https://www.thehindu.com/news/states/feeder/default.rss', name: 'The Hindu States' },
@@ -20,6 +27,10 @@ const RSS_FEEDS = [
   { url: 'https://feeds.feedburner.com/ndtvnews-india-news', name: 'NDTV India' },
   { url: 'https://feeds.feedburner.com/ndtvnews-latest', name: 'NDTV Latest' },
   { url: 'https://indianexpress.com/section/india/feed/', name: 'Indian Express' },
+  { url: 'https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml', name: 'Hindustan Times India' },
+  { url: 'https://www.news18.com/commonfeeds/v1/eng/rss/india.xml', name: 'News18 India' },
+  { url: 'https://www.indiatoday.in/rss/1206578', name: 'India Today India' },
+  { url: 'https://www.freepressjournal.in/stories.rss', name: 'Free Press Journal' },
 ];
 
 export async function fetchRSSReports(): Promise<DisasterReport[]> {

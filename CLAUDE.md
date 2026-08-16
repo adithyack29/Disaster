@@ -513,11 +513,54 @@ report would never contain either. **Reinforces the standing rule for every `FOR
 addition**: always test both directions (the false positive you're fixing AND a plausible real
 disaster headline using similar wording) before committing, not just the case you're fixing.
 
+### 2026-08-16 (ninth entry) — Pre-presentation push: more RSS sources, a systemic classification-order bug, and a wave of false positives
+User needed real live volume working reliably for a presentation the next day. Investigated the
+three sources stuck at 0 (`ReliefWeb`, `Bluesky`, `Reddit`) by curling their endpoints directly:
+**ReliefWeb v1 is decommissioned** (`410 Gone`, "use v2 instead") and v2 requires a
+pre-approved `appname` this project doesn't have (external approval process, deprioritized —
+not fixable before a deadline); **Bluesky** returns a bunny.net/Cloudflare-style `403` bot-check
+page, an IP/TLS-fingerprint-level block, not a header issue (not fixable without full OAuth);
+**Reddit**'s unauthenticated public JSON endpoint now returns an HTML interstitial instead of
+JSON (Reddit has tightened anti-bot enforcement on `www.reddit.com/*.json` since 2023) — would
+need the already-supported-but-unused `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` OAuth path to
+fix, deprioritized for the same reason. Chose the highest-value lever with zero new credentials
+instead: **expanded `RSS_FEEDS`** in `server/adapters/rssAdapter.ts` from 7 to 11 (added
+Hindustan Times, News18, India Today, Free Press Journal). Verification method matters here —
+Zee News and DNA India both returned `200` to a plain `curl`, but **failed with `403` through
+`rss-parser`'s actual Node HTTP client** (TLS-fingerprint bot detection, invisible to a
+browser-UA curl test) — caught by testing end-to-end with `fetchRSSReports()` itself via a
+throwaway `tsx` script, not just curling the URL, and left both out.
+
+That same end-to-end test surfaced a **systemic classification-order bug**, not just isolated
+false positives: `classifyCategory` checked `medical` before `landslide`/other specific
+categories, and real disaster reports routinely mention "injured"/"hospital" alongside their
+actual hazard — so genuine landslide/flood reports kept losing their real category to `medical`.
+Concretely: "Wayanad landslide: Death toll rises to 3... injured several people" classified as
+`medical` instead of `landslide`. Fixed by introducing an explicit `CATEGORY_CHECK_ORDER` array
+in `server/classifier.ts` (`medical` checked last) instead of relying on `CATEGORY_KEYWORDS`
+object key order — this is a systemic fix, not a `FORBIDDEN_TERMS` patch, and only changes
+behavior when both a specific-hazard keyword and a medical-adjacent word are present (the common
+case for real disaster news); a pure medical-only story still correctly falls through to
+`medical`. The broader RSS coverage also surfaced five more real `FORBIDDEN_TERMS` cases in one
+pass: three different phrasings of the same recurring Varanasi-airport-accidental-firearm-
+discharge story ("gun going off," "accidental firing," "airport firing" — none matched the
+fourth entry's original 'gun went off'/'gun goes off' guards), a Sukhbir Singh Badal
+hospital-discharge follow-up to an assassination attempt ("Nanded Attack"), a crime/extortion
+story ("Car Set on Fire" tripping the fire category), an AQI/clean-air story tripping flood via
+'monsoon rain', a viral "man cooks omelette in heatwave" human-interest post, and — from
+Mastodon, not RSS — a bicycle marketplace listing ("#Cyclone single-speed... on Sprocket")
+tripping the cyclone category off a bike model literally named "Cyclone." All fixed via targeted
+`FORBIDDEN_TERMS` additions, each verified both directions per the eighth entry's rule. Full
+pipeline (`aggregateAndClassify()`) verified end-to-end afterward via the same tsx-script
+pattern: one run returned 12 genuine reports, mostly a real cluster of Kerala/Karnataka/Mumbai
+landslide and flood news from a legitimate outlet's (`@Mathrubhumi_English`) Mastodon account.
+
 **Known risk for a live demo, not fully closed**: `classifyCategory`'s bare-substring keyword
-matching still occasionally miscategorizes borderline real news (crime/political stories that
-happen to contain a category keyword as a substring). Instances found and patched via
-`FORBIDDEN_TERMS` so far: "attacker... kirpan", "gun goes off... injured", "storm of hype" (GST
-evasion story), "complete collapse" (Bihar politics) — see Investigation
-Log). Low-severity/low-frequency in testing, but a judge who reads a card closely could notice
+matching still occasionally miscategorizes borderline real news (crime/political/viral/
+marketplace content that happens to contain a category keyword as a substring). Nine concrete
+instances found and patched via `FORBIDDEN_TERMS` so far across the session — see Investigation
+Log for the full list. This is a whack-a-mole pattern by nature; expect more to surface with
+broader source coverage, and always verify a fix both directions (see eighth entry) before
+shipping. Low-severity/low-frequency in testing, but a judge who reads a card closely could notice
 another one; treat any newly reported miscategorization the same way — a targeted
 `FORBIDDEN_TERMS` addition, not a rewrite of the category keyword lists.

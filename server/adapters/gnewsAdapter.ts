@@ -11,12 +11,20 @@ export async function fetchGNewsReports(): Promise<DisasterReport[]> {
     return [];
   }
 
-  try {
-    const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue) India');
-    const url = `https://gnews.io/api/v4/search?q=${query}&lang=en&country=in&max=20&apikey=${apiKey}`;
-    const response = await fetch(url);
-    if (!response.ok) return [];
+  const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue) India');
+  const url = `https://gnews.io/api/v4/search?q=${query}&lang=en&country=in&max=20&apikey=${apiKey}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    // Throw (rather than silently return []) so aggregate.ts's per-source diagnostics can
+    // distinguish "GNews returned 0 real matches" from "our request is failing" (e.g. an
+    // invalid/expired key returns 403/401 here) — see CLAUDE.md Investigation Log 2026-08-16,
+    // ninth entry. aggregate.ts's Promise.allSettled already treats a rejected source safely
+    // (0 reports contributed, no blank dashboard), so this is a pure diagnostics improvement.
+    const body = await response.text().catch(() => '');
+    throw new Error(`GNews request failed: ${response.status} ${response.statusText} — ${body.slice(0, 200)}`);
+  }
 
+  try {
     const data = await response.json();
     const articles = data.articles || [];
     const reports: DisasterReport[] = [];

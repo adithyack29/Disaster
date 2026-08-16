@@ -11,12 +11,18 @@ export async function fetchNewsAPIReports(): Promise<DisasterReport[]> {
     return [];
   }
 
-  try {
-    const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue OR inundation) India');
-    const url = `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=30&apiKey=${apiKey}`;
-    const response = await fetch(url);
-    if (!response.ok) return [];
+  const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue OR inundation) India');
+  const url = `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=30&apiKey=${apiKey}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    // Throw (rather than silently return []) so aggregate.ts's per-source diagnostics can
+    // distinguish "NewsAPI returned 0 real matches" from "our request is failing" — see
+    // CLAUDE.md Investigation Log 2026-08-16, ninth entry.
+    const body = await response.text().catch(() => '');
+    throw new Error(`NewsAPI request failed: ${response.status} ${response.statusText} — ${body.slice(0, 200)}`);
+  }
 
+  try {
     const data = await response.json();
     const articles = data.articles || [];
     const reports: DisasterReport[] = [];

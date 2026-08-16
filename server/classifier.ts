@@ -67,10 +67,26 @@ const CATEGORY_KEYWORDS: Record<CategoryType, string[]> = {
     'heat stroke', 'outbreak', 'poisoning'
   ],
   landslide: [
-    'landslide', 'mudslide', 'cloudburst', 'rockfall', 'debris flow', 'sludge', 'boulder fall', 
+    'landslide', 'mudslide', 'cloudburst', 'rockfall', 'debris flow', 'sludge', 'boulder fall',
     'earthmover', 'blocked by landslide', 'road blocked'
   ],
 };
+
+// Category check order for classifyCategory — deliberately NOT the same as CATEGORY_KEYWORDS'
+// key order above. 'medical' is checked LAST: its keywords ('injured', 'hospital', 'rescued',
+// 'casualty', 'ambulance') are companion vocabulary that shows up in almost every real disaster
+// report regardless of the actual hazard (a landslide report legitimately says "injured", a
+// flood report legitimately says "hospital"). Checking 'medical' early meant a genuine landslide
+// or flood report matched 'medical' first and never got a chance to match its real category —
+// e.g. "Wayanad landslide: Death toll rises to 3... injured several people" was classified
+// medical instead of landslide (see CLAUDE.md Investigation Log 2026-08-16, ninth entry). This
+// is a systemic fix, not a one-off FORBIDDEN_TERMS patch: it only changes behavior when BOTH a
+// specific-hazard keyword AND a medical-adjacent word are present, which is the common case for
+// real disaster news — a pure medical-only story (no flood/fire/earthquake/cyclone/
+// building_collapse/landslide keyword present) still correctly falls through to 'medical'.
+const CATEGORY_CHECK_ORDER: CategoryType[] = [
+  'flood', 'fire', 'earthquake', 'cyclone', 'building_collapse', 'landslide', 'medical',
+];
 
 // Comprehensive Indian states, union territories & major hubs dictionary for location extraction
 const INDIAN_LOCATIONS: { keyword: string; state: string; lat: number; lng: number }[] = [
@@ -194,7 +210,36 @@ export const FORBIDDEN_TERMS = [
   // ("Complete collapse of 3-story building in Mumbai") legitimately uses that exact wording, so
   // blocking it would create false negatives on real disasters. Guards via the specific
   // politician/venue instead, which a real structural-collapse report would never mention.
-  'tejashwi', 'raj bhavan march'
+  'tejashwi', 'raj bhavan march',
+  // A single real-world incident (a passenger's licensed pistol accidentally discharging at
+  // Varanasi airport, injuring 2 screeners) generated a wave of follow-up articles over several
+  // days, each phrased differently enough to dodge the fourth entry's original guard terms
+  // ('gun went off'/'gun goes off' didn't match "gun going off"; "accidental firing" and
+  // "airport firing" weren't covered at all). See CLAUDE.md Investigation Log 2026-08-16, ninth
+  // entry. Adding the specific recurring phrasings/venue markers rather than broadening to bare
+  // 'firing', which would be far too aggressive (could match legitimate disaster-response terms).
+  'gun going off', 'accidental firing', 'airport firing', 'screeners', 'aaiclas',
+  // Attack/assassination-attempt follow-up story using different wording than the existing
+  // 'assassination'/'attacker'/'shot at' guards (see first entry) — a political leader's
+  // hospital discharge update, not a natural/civil disaster.
+  'nanded attack', 'sukhbir',
+  // Crime story (extortion attempt, arson as intimidation) — 'fire' keyword collision via "Car
+  // Set on Fire", not an accidental/natural fire.
+  'extortion',
+  // Pollution/air-quality-index stories can trip the flood category's 'monsoon rain' keyword
+  // (rain washing pollutants away is reported as an AQI improvement, not a flood) — narrow to
+  // the AQI-specific acronym rather than touching 'monsoon rain', which is a legitimate flood
+  // signal in the vast majority of real flood dispatches.
+  'aqi',
+  // Viral/human-interest story marker — "man cooks omelette in heatwave, netizens shocked" is
+  // entertainment content, not an actionable heatwave disaster dispatch, despite matching the
+  // medical category's 'heatwave' keyword.
+  'netizens shocked',
+  // Social-media marketplace listings ("#Cyclone single-speed for Negotiable price on Sprocket
+  // in #Amritsar") collide with the cyclone category via a bicycle model/brand name literally
+  // called "Cyclone" — a real Mastodon post found during testing, not hypothetical. Guards via
+  // the marketplace-listing markers rather than touching the 'cyclone' keyword itself.
+  'sprocketapp', 'single-speed', 'negotiable price'
 ];
 
 /**
@@ -242,9 +287,9 @@ export function isIndiaRelated(text: string): boolean {
 export function classifyCategory(text: string): CategoryType | null {
   const lower = text.toLowerCase();
 
-  for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-    if (keywords.some((kw) => containsKeyword(lower, kw))) {
-      return cat as CategoryType;
+  for (const cat of CATEGORY_CHECK_ORDER) {
+    if (CATEGORY_KEYWORDS[cat].some((kw) => containsKeyword(lower, kw))) {
+      return cat;
     }
   }
 
