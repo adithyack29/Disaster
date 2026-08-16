@@ -99,9 +99,14 @@ app never silently blends fake data into a healthy live feed, and never blanks o
 - `vercel.json` declares `api/reports.ts` and `api/situation-brief.ts` as Vercel Functions. The
   SPA catch-all rewrite is `"/((?!api/).*)"` so it can never shadow the functions.
 - `api/reports.ts`: runs `aggregateAndClassify()` with a module-scope in-memory cache (2 min TTL,
-  `?refresh=true` to force). No database — Vercel Fluid Compute reuses warm instances, so the
-  cache mostly survives between requests, but a cold instance just re-aggregates. In-flight
-  requests are coalesced into a single shared promise.
+  `?refresh=true` to force) — this part is still per-warm-instance only, a cold instance just
+  re-runs it. Separately, the set of *accumulated live reports* (see gotcha #7) is persisted in
+  Upstash Redis (`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`, provisioned via the Vercel
+  Marketplace — see Investigation Log 2026-08-16, fifth entry) so it survives cold starts and is
+  shared across concurrent instances, unlike the 2-min cache itself. Falls back to an in-memory
+  Map if those env vars aren't set, so the app still works (with the old per-instance-only
+  caveat) before/without provisioning Redis. In-flight requests are coalesced into a single
+  shared promise.
 - `api/situation-brief.ts`: stateless — client POSTs the `IncidentCluster` it already computed;
   the function just runs `generateAISituationBrief(cluster)`.
 - `server/aggregate.ts`: `aggregateAndClassify()` — fetches all 10 adapters concurrently via
@@ -224,9 +229,11 @@ and `CategoryFilterBar`/`DisasterCardGrid` respectively.
 3. **`src/lib/gemini.ts`'s `generateAISummary` is NOT an AI call** despite the name — it's a
    deterministic local template, used only as the last-resort fallback if
    `/api/situation-brief` itself is unreachable. Don't be misled by the filename.
-4. **`api/reports.ts`'s in-memory cache is per-warm-instance, not global** — different concurrent
-   Vercel instances can briefly disagree. Fine for this app; would need shared storage
-   (Redis/KV) if strict cross-instance consistency ever mattered.
+4. **`api/reports.ts`'s 2-minute request cache is still per-warm-instance, not global** —
+   different concurrent Vercel instances can briefly disagree on *when* they last refreshed.
+   Fine for this app. The separate *accumulated live reports* set (gotcha #7) no longer has this
+   limitation as of the Upstash Redis integration (Investigation Log 2026-08-16, fifth entry) —
+   only the short-lived request cache is still instance-local.
 5. **Forgetting to invalidate the client cache / add a store field to `DashboardPage`'s effect
    deps silently breaks a toggle** that should cause an immediate refetch — happened with the
    Demo Mode toggle (badge changed, data didn't) before being caught by actually testing it, not
@@ -242,13 +249,15 @@ and `CategoryFilterBar`/`DisasterCardGrid` respectively.
    failure. Before the fix in Investigation Log 2026-08-16 (second entry), `refreshReports()`
    fully replaced the cache with whatever that single pass found, so any quiet pass flipped
    production back to `mode: 'demo'` (the same 60 static headlines, just re-timestamped) even
-   after real reports had been showing. Fixed via a module-scope `accumulatedLive` map
-   (headline-keyed, capped at `MAX_ACCUMULATED_REPORTS`/`MAX_ACCUMULATED_AGE_MS`) that every
-   pass merges into rather than replaces — the serverless analog of `server/pipeline.ts`
-   inserting into SQLite on every run. `mode` only reverts to `'demo'` if this warm instance has
-   *never* accumulated a single live report. If you touch `api/reports.ts` again, preserve this
-   merge — reverting to a full-replace cache silently reintroduces the "production never
-   updates" bug.
+   after real reports had been showing. Fixed via an accumulator (headline-keyed, capped at
+   `MAX_ACCUMULATED_REPORTS`/`MAX_ACCUMULATED_AGE_MS`) that every pass merges into rather than
+   replaces — the serverless analog of `server/pipeline.ts` inserting into SQLite on every run.
+   `mode` only reverts to `'demo'` if the accumulated set has *never* held a single live report.
+   As of Investigation Log 2026-08-16's fifth entry this accumulator is persisted in Upstash
+   Redis (survives cold starts, shared across instances) rather than plain module-scope state —
+   see `mergeLiveReports()` in `api/reports.ts`. If you touch `api/reports.ts` again, preserve
+   this merge-not-replace behavior — reverting to a full-replace cache silently reintroduces the
+   "production never updates" bug.
 8. **Every relative import in `api/**/*.ts` and `server/**/*.ts` (and any `src/` file they
    import, e.g. `src/types/incident.ts`, `src/data/mockReports.ts`) MUST use an explicit `.js`
    extension** (`import x from './foo.js'`, referencing a `.ts` file on disk — standard TS/Node
@@ -403,6 +412,35 @@ throwaway `tsx -e` script: the exact headline/description now returns `false` fr
 whack-a-mole pattern, not a permanent fix — see Coding Standards' note on `.includes()`-style
 keyword matching being only partially fixed; expect more of these one-off `FORBIDDEN_TERMS`
 additions as new false-positive story types surface.
+
+### 2026-08-16 (fifth entry) — Localhost (27 live reports) vs. production (1) volume gap: added Upstash Redis persistence
+User compared localhost and production side by side after entry four's fix and found both
+correctly showed `mode: 'live'`, but production had only 1 accumulated report vs. localhost's
+27, and production reports all showed `classificationMethod: 'keyword-fallback'` with no
+`AI-ASSISTED` badge. Two independent causes, not one: (1) `GEMINI_API_KEY` is very likely not
+set in the Vercel project's environment variables — this is a dashboard action for the user, not
+fixable from code (confirmed via the raw `/api/reports` response showing `keyword-fallback` for
+every report); (2) the accumulator from gotcha #7 was still plain module-scope state, so it
+reset on every Vercel cold start and was never shared across concurrent instances — unlike
+`server/pipeline.ts`'s SQLite, which has been accumulating continuously on a single long-running
+dev process for hours. Considered a Vercel Cron Job (`vercel.json` `crons`, hitting
+`/api/reports?refresh=true` on a schedule to keep ingestion running without relying on visitor
+traffic) as a same-architecture fix, but checked the current docs
+(`vercel.com/docs/cron-jobs/usage-and-pricing`) first: **Hobby-plan cron jobs are capped at once
+per day** (`0 * * * *`-style frequent schedules fail at deploy time) — only viable on Pro, and
+the user's plan tier wasn't confirmed, so this wouldn't reliably help. User chose real
+persistence instead: provisioned Upstash Redis via the Vercel Marketplace. Implemented in
+`api/reports.ts`'s `mergeLiveReports()` — reads/writes the accumulated set to a single Redis key
+(`disaster:accumulated-live-reports`) via `@upstash/redis`'s `Redis.fromEnv()` (reads
+`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`, both auto-injected by the Marketplace
+integration), falling back to the old in-memory Map if those env vars are absent so the app
+still works before/without provisioning it. Verified: throwaway-tsconfig Vercel-mode
+`tsc --noEmit` still passes (bare package import, no extension needed), `npm run build` still
+succeeds and bundle size is unaffected (the package is never imported into any `src/` file, so
+it doesn't reach the client bundle). Not yet verified against the live Vercel deployment — next
+session should confirm accumulated report count grows and survives across page loads spaced
+minutes apart (evidence of surviving a cold start), and stays correct if a judge and the
+presenter load the site from different Vercel instances simultaneously.
 
 **Known risk for a live demo, not fully closed**: `classifyCategory`'s bare-substring keyword
 matching still occasionally miscategorizes borderline real news (crime/political stories that

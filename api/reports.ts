@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { Redis } from '@upstash/redis';
 import type { DisasterReport } from '../src/types/incident.js';
 import { aggregateAndClassify } from '../server/aggregate.js';
 import { getFreshMockReports } from '../src/data/mockReports.js';
@@ -10,11 +11,11 @@ const CACHE_TTL_MS = 2 * 60 * 1000;
 // still honestly live, not demo. Only a total failure/empty result triggers the fallback.
 const LIVE_MIN_COUNT = 1;
 
-// Vercel has no database (see CLAUDE.md), so accumulated live reports only live as long as
-// this warm instance does. Cap it so a long-lived instance doesn't grow unbounded, and drop
-// anything older than a day so accumulation doesn't paper over a genuinely dead feed forever.
+// Cap accumulation so it doesn't grow unbounded, and drop anything older than a day so it
+// doesn't paper over a genuinely dead feed forever.
 const MAX_ACCUMULATED_REPORTS = 300;
 const MAX_ACCUMULATED_AGE_MS = 24 * 60 * 60 * 1000;
+const REDIS_ACCUMULATED_KEY = 'disaster:accumulated-live-reports';
 
 export type IngestionMode = 'live' | 'demo';
 
@@ -27,35 +28,65 @@ export interface ReportsPayload {
 
 // Module-scope cache. Vercel Fluid Compute reuses warm function instances across requests,
 // so this survives between invocations most of the time and saves hitting 10 upstream APIs
-// on every page load — there is no database in this deployment (see CLAUDE.md).
+// on every page load.
 let cache: { payload: ReportsPayload; fetchedAt: number } | null = null;
 let inFlight: Promise<ReportsPayload> | null = null;
 
-// Accumulates every genuinely live report ever seen by this warm instance, the serverless
-// analog of server/pipeline.ts inserting into SQLite on every 3-minute run: a single 8s-per-
-// source ingestion pass frequently comes back with zero *new* items (sparse real-time India
-// disaster news, tight timeouts across 10 sources), and without this the cache used to fully
-// overwrite itself with the static demo snapshot on every such pass — real reports never had
-// a chance to accumulate the way they do locally, so production looked permanently "stuck" on
-// the same 60 demo headlines while localhost (long-running, persistent SQLite) looked live.
-let accumulatedLive: Map<string, DisasterReport> = new Map();
+// Accumulates every genuinely live report ever seen, the serverless analog of
+// server/pipeline.ts inserting into SQLite on every 3-minute run: a single 8s-per-source
+// ingestion pass frequently comes back with zero *new* items (sparse real-time India disaster
+// news, tight timeouts across 10 sources), and without accumulation the cache used to fully
+// overwrite itself with the static demo snapshot on every such pass — real reports never had a
+// chance to build up the way they do locally.
+//
+// Persisted in Upstash Redis when `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` are set
+// (provision via the Vercel Marketplace — see CLAUDE.md) so accumulation survives cold starts
+// and is shared across concurrent warm instances, unlike plain module-scope state. Falls back
+// to an in-memory Map if Redis isn't configured, so the app still works (with the same
+// per-warm-instance caveat as before) before/without provisioning it.
+const redis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
+  ? Redis.fromEnv()
+  : null;
+let memoryAccumulatedLive: Map<string, DisasterReport> = new Map();
 
-function mergeLiveReports(freshlyFetched: DisasterReport[]): DisasterReport[] {
+function dedupeByHeadlineMap(reports: DisasterReport[]): Map<string, DisasterReport> {
+  const map = new Map<string, DisasterReport>();
+  for (const report of reports) {
+    map.set(report.headline.toLowerCase().trim(), report);
+  }
+  return map;
+}
+
+function pruneAndCap(reports: DisasterReport[]): DisasterReport[] {
   const cutoff = Date.now() - MAX_ACCUMULATED_AGE_MS;
-  for (const report of freshlyFetched) {
-    accumulatedLive.set(report.headline.toLowerCase().trim(), report);
-  }
-  for (const [key, report] of accumulatedLive) {
-    if (new Date(report.timestamp).getTime() < cutoff) {
-      accumulatedLive.delete(key);
+  const fresh = reports.filter((r) => new Date(r.timestamp).getTime() >= cutoff);
+  fresh.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  fresh.length = Math.min(fresh.length, MAX_ACCUMULATED_REPORTS);
+  return fresh;
+}
+
+async function mergeLiveReports(freshlyFetched: DisasterReport[]): Promise<DisasterReport[]> {
+  if (redis) {
+    let existing: DisasterReport[] = [];
+    try {
+      existing = (await redis.get<DisasterReport[]>(REDIS_ACCUMULATED_KEY)) || [];
+    } catch (err) {
+      console.error('[api/reports] Redis read failed, continuing with an empty accumulator this pass:', err);
     }
+    const merged = pruneAndCap(Array.from(dedupeByHeadlineMap([...existing, ...freshlyFetched]).values()));
+    try {
+      await redis.set(REDIS_ACCUMULATED_KEY, merged);
+    } catch (err) {
+      console.error('[api/reports] Redis write failed (accumulation for this pass won\'t persist):', err);
+    }
+    return merged;
   }
-  const merged = Array.from(accumulatedLive.values());
-  merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  if (merged.length > MAX_ACCUMULATED_REPORTS) {
-    merged.length = MAX_ACCUMULATED_REPORTS;
-    accumulatedLive = new Map(merged.map((r) => [r.headline.toLowerCase().trim(), r]));
+
+  for (const report of freshlyFetched) {
+    memoryAccumulatedLive.set(report.headline.toLowerCase().trim(), report);
   }
+  const merged = pruneAndCap(Array.from(memoryAccumulatedLive.values()));
+  memoryAccumulatedLive = dedupeByHeadlineMap(merged);
   return merged;
 }
 
@@ -79,7 +110,7 @@ function demoPayload(): ReportsPayload {
  */
 async function refreshReports(): Promise<ReportsPayload> {
   const freshlyFetched = await aggregateAndClassify();
-  const merged = mergeLiveReports(freshlyFetched);
+  const merged = await mergeLiveReports(freshlyFetched);
   if (merged.length >= LIVE_MIN_COUNT) {
     return { reports: merged, mode: 'live', liveCount: merged.length, generatedAt: new Date().toISOString() };
   }
