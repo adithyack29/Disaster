@@ -14,6 +14,22 @@ import { fetchGNewsReports } from './adapters/gnewsAdapter.js';
 
 const SOURCE_TIMEOUT_MS = 8000;
 
+// Diagnostic-only state so callers (e.g. api/reports.ts) can report per-source fetch counts
+// without needing Vercel Function Logs access — tells apart "adapter's key/config is broken"
+// from "adapter works but found zero matching real disasters right now" (see CLAUDE.md
+// Investigation Log 2026-08-16, seventh/eighth entries). Safe to remove once source health is
+// confirmed working end-to-end.
+export interface SourceDiagnostic {
+  label: string;
+  status: 'fulfilled' | 'rejected';
+  fetchedCount: number;
+  error?: string;
+}
+let lastSourceDiagnostics: SourceDiagnostic[] = [];
+export function getLastSourceDiagnostics(): SourceDiagnostic[] {
+  return lastSourceDiagnostics;
+}
+
 /**
  * Bounds a single adapter call so one slow/hanging source can never stall the whole
  * aggregation run (adapters themselves do not set fetch timeouts).
@@ -63,13 +79,19 @@ export async function aggregateAndClassify(): Promise<DisasterReport[]> {
   const settled = await Promise.allSettled(sources.map(([label, p]) => withTimeout(p, label)));
 
   const allFetched: DisasterReport[] = [];
-  settled.forEach((result, i) => {
+  lastSourceDiagnostics = settled.map((result, i) => {
     const [label] = sources[i];
     if (result.status === 'fulfilled') {
       allFetched.push(...result.value);
-    } else {
-      console.warn(`[Aggregate] ${label} source failed/timed out:`, result.reason?.message || result.reason);
+      return { label, status: 'fulfilled' as const, fetchedCount: result.value.length };
     }
+    console.warn(`[Aggregate] ${label} source failed/timed out:`, result.reason?.message || result.reason);
+    return {
+      label,
+      status: 'rejected' as const,
+      fetchedCount: 0,
+      error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+    };
   });
 
   allFetched.forEach((r) => {
