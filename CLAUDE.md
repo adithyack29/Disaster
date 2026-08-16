@@ -588,3 +588,42 @@ broader source coverage, and always verify a fix both directions (see eighth ent
 shipping. Low-severity/low-frequency in testing, but a judge who reads a card closely could notice
 another one; treat any newly reported miscategorization the same way — a targeted
 `FORBIDDEN_TERMS` addition, not a rewrite of the category keyword lists.
+
+### 2026-08-16 (eleventh entry) — "Localhost has real reports, production doesn't" root cause: outdated 8s/30s serverless timeouts
+User reported production ( `ndrfdisaster.vercel.app`) showing only 2 thin cards while localhost
+showed a rich, current feed including real Wayanad landslide/Uttarakhand tunnel collapse/
+Arunachal flash flood stories. Diagnosed by curling `/api/reports?refresh=true` directly and
+comparing against localhost's `/api/reports` side by side: both correctly read `mode: 'live'`
+and the Redis accumulator was confirmed *not* resetting (three repeated `?refresh=true` calls a
+few seconds apart all returned the same 4 reports, ruling out a cache/persistence bug) — so this
+wasn't a repeat of gotchas #4/#7/#10. The `sources` diagnostic (added in the eighth entry) showed
+the real cause: production's `RSS` adapter returned `fetchedCount: 4` on a pass run at the same
+time localhost's continuously-running dev process had 15+ RSS items alone, including the exact
+real disaster stories missing from production. Root cause: `server/aggregate.ts`'s
+`SOURCE_TIMEOUT_MS` was `8000` and `vercel.json`'s `api/reports.ts` `maxDuration` was `30` —
+both conservative defaults chosen before Vercel's Fluid Compute update, which now gives every
+plan (including Hobby) a 300s function execution budget by default (confirmed via the
+`vercel-functions` skill, not assumed). 8 seconds was too tight for `rssAdapter.ts`'s 11
+concurrently-fetched feeds under real serverless network latency, even though the same fetch
+comfortably completes within 8s on a local unconstrained connection — so production was
+silently dropping most of a pass's real results as timeouts, not finding fewer to begin with.
+Fixed by raising `SOURCE_TIMEOUT_MS` to `20000` and `maxDuration` to `60` (both still far under
+the 300s platform ceiling, all 10 adapters still run concurrently via `Promise.allSettled` so
+this doesn't serialize anything, just raises the ceiling for slow sources). Also found and fixed
+two secondary bugs while investigating: (1) the Redis/in-memory accumulator's dedup key was raw
+headline text (`report.headline.toLowerCase().trim()`) — a source that lightly edits its own
+headline between two fetches of the same article ("IMD predicts heavy rain in 5 districts" →
+"IMD predicts heavy rainfall in 5 districts", same URL) produced two near-duplicate accumulated
+entries instead of one; changed the dedup key to `report.id` (a stable hash of the source URL
+via `hashId()`) in both `dedupeByHeadlineMap`/now `dedupeByIdMap`'s call sites in
+`api/reports.ts`; (2) a new `FORBIDDEN_TERMS` false positive — "'She May Smoke Weed, Have
+Relationships With Other Men...': Bhopal Man Seeks Wife's Return" (a personal-life human-interest
+story) tripped the `fire` category via the `'smoke'` keyword — fixed by adding the specific
+phrase `'smoke weed'` rather than touching `'smoke'` itself, verified both directions (blocks the
+false positive, still lets a real "toxic fumes"/"smoke visible for kilometers" fire headline
+through) per the eighth entry's rule. Verified via the same tsx-script and throwaway
+Vercel-mode-tsconfig pattern used throughout this session; `npm run build` and `npm run lint`
+both still clean (only pre-existing warnings). Not yet confirmed against the live Vercel
+deployment post-push — next session should re-curl `/api/reports?refresh=true` a few minutes
+apart and check the `sources.RSS.fetchedCount` diagnostic rose closer to localhost's volume, and
+that the duplicate Yanam-headline pair is gone from the accumulated set.

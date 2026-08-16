@@ -239,7 +239,11 @@ export const FORBIDDEN_TERMS = [
   // in #Amritsar") collide with the cyclone category via a bicycle model/brand name literally
   // called "Cyclone" — a real Mastodon post found during testing, not hypothetical. Guards via
   // the marketplace-listing markers rather than touching the 'cyclone' keyword itself.
-  'sprocketapp', 'single-speed', 'negotiable price'
+  'sprocketapp', 'single-speed', 'negotiable price',
+  // Personal-life human-interest story ("She May Smoke Weed, Have Relationships With Other
+  // Men...") trips the fire category's 'smoke' keyword. Guarded via the specific phrase rather
+  // than touching 'smoke' itself, which is a legitimate signal in real fire/toxic-fume reports.
+  'smoke weed',
 ];
 
 /**

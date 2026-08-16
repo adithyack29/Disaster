@@ -12,7 +12,15 @@ import { fetchRedditReports } from './adapters/redditAdapter.js';
 import { fetchNewsAPIReports } from './adapters/newsApiAdapter.js';
 import { fetchGNewsReports } from './adapters/gnewsAdapter.js';
 
-const SOURCE_TIMEOUT_MS = 8000;
+// Was 8000ms, left over from before Vercel Fluid Compute raised the default function execution
+// budget to 300s on all plans (see vercel.json's maxDuration, bumped alongside this). 8s was too
+// tight for adapters like rssAdapter.ts (11 concurrent feed fetches) under real serverless
+// network conditions — production was silently returning far fewer reports per pass than
+// localhost's unconstrained dev process, even though both run identical ingestion code (see
+// CLAUDE.md Investigation Log 2026-08-16, eleventh entry). All 10 adapters still run concurrently
+// via Promise.allSettled, so this only raises the ceiling for slow sources, it doesn't serialize
+// anything.
+const SOURCE_TIMEOUT_MS = 20000;
 
 // Diagnostic-only state so callers (e.g. api/reports.ts) can report per-source fetch counts
 // without needing Vercel Function Logs access — tells apart "adapter's key/config is broken"

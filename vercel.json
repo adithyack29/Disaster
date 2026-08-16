@@ -3,7 +3,7 @@
   "outputDirectory": "dist",
   "functions": {
     "api/reports.ts": {
-      "maxDuration": 30
+      "maxDuration": 60
     },
     "api/situation-brief.ts": {
       "maxDuration": 30

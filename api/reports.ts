@@ -59,10 +59,16 @@ const redis = redisRestUrl && redisRestToken
   : null;
 let memoryAccumulatedLive: Map<string, DisasterReport> = new Map();
 
-function dedupeByHeadlineMap(reports: DisasterReport[]): Map<string, DisasterReport> {
+// Keyed by report.id (a hash of the source URL, via hashId()), not headline text. A source
+// re-publishing the same article with a lightly edited headline ("heavy rain" -> "heavy
+// rainfall" between two RSS pulls of the same link) used to slip past headline-based dedup and
+// accumulate as two near-identical cards forever (see CLAUDE.md Investigation Log 2026-08-16,
+// eleventh entry). The underlying URL doesn't change when a headline gets a copy-edit, so it's
+// the stable key.
+function dedupeByIdMap(reports: DisasterReport[]): Map<string, DisasterReport> {
   const map = new Map<string, DisasterReport>();
   for (const report of reports) {
-    map.set(report.headline.toLowerCase().trim(), report);
+    map.set(report.id, report);
   }
   return map;
 }
@@ -95,7 +101,7 @@ async function mergeLiveReports(freshlyFetched: DisasterReport[]): Promise<Disas
     } catch (err) {
       console.error('[api/reports] Redis read failed, continuing with an empty accumulator this pass:', err);
     }
-    const merged = pruneAndCap(Array.from(dedupeByHeadlineMap([...existing, ...freshlyFetched]).values()));
+    const merged = pruneAndCap(Array.from(dedupeByIdMap([...existing, ...freshlyFetched]).values()));
     try {
       await redis.set(REDIS_ACCUMULATED_KEY, merged);
     } catch (err) {
@@ -105,10 +111,10 @@ async function mergeLiveReports(freshlyFetched: DisasterReport[]): Promise<Disas
   }
 
   for (const report of freshlyFetched) {
-    memoryAccumulatedLive.set(report.headline.toLowerCase().trim(), report);
+    memoryAccumulatedLive.set(report.id, report);
   }
   const merged = pruneAndCap(Array.from(memoryAccumulatedLive.values()));
-  memoryAccumulatedLive = dedupeByHeadlineMap(merged);
+  memoryAccumulatedLive = dedupeByIdMap(merged);
   return merged;
 }
 
