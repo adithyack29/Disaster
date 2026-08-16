@@ -227,6 +227,19 @@ and `CategoryFilterBar`/`DisasterCardGrid` respectively.
 4. **`api/reports.ts`'s in-memory cache is per-warm-instance, not global** — different concurrent
    Vercel instances can briefly disagree. Fine for this app; would need shared storage
    (Redis/KV) if strict cross-instance consistency ever mattered.
+7. **`api/reports.ts` must accumulate live reports across cache cycles, not just cache the
+   latest pass.** A single ingestion pass (8s-per-source timeout across 10 sources, sparse
+   real-time India disaster news) very often finds zero *new* items — that's normal, not a
+   failure. Before the fix in Investigation Log 2026-08-16 (second entry), `refreshReports()`
+   fully replaced the cache with whatever that single pass found, so any quiet pass flipped
+   production back to `mode: 'demo'` (the same 60 static headlines, just re-timestamped) even
+   after real reports had been showing. Fixed via a module-scope `accumulatedLive` map
+   (headline-keyed, capped at `MAX_ACCUMULATED_REPORTS`/`MAX_ACCUMULATED_AGE_MS`) that every
+   pass merges into rather than replaces — the serverless analog of `server/pipeline.ts`
+   inserting into SQLite on every run. `mode` only reverts to `'demo'` if this warm instance has
+   *never* accumulated a single live report. If you touch `api/reports.ts` again, preserve this
+   merge — reverting to a full-replace cache silently reintroduces the "production never
+   updates" bug.
 5. **Forgetting to invalidate the client cache / add a store field to `DashboardPage`'s effect
    deps silently breaks a toggle** that should cause an immediate refetch — happened with the
    Demo Mode toggle (badge changed, data didn't) before being caught by actually testing it, not
@@ -301,6 +314,33 @@ fabricated "time saved vs. manual monitoring" counter — no real baseline exist
 against, and inventing one would conflict with the project's own honesty/traceability principles;
 the existing "Reports Ingested (1hr)" / "Active Channels" stats already convey monitoring scale
 without fabricating a number.
+
+### 2026-08-16 (second entry) — "Localhost is live, production never updates" root cause
+User reported the deployed Vercel site always showed the same static-looking headlines
+(re-timestamped as "Updated 1 minute ago" etc. but never actually changing), while `npm run
+server` locally looked genuinely live. Both environments run the *identical* ingestion code
+(`server/aggregate.ts`'s `aggregateAndClassify()`, shared per Architecture above) — the bug
+wasn't in ingestion logic, it was in how each environment's caching layer treated a single
+ingestion pass finding nothing new. `server/pipeline.ts` (dev) inserts every found report into
+SQLite on every 3-minute run and never clears it (except purging non-India items) — so real
+reports accumulate over the life of the long-running dev process, and a quiet pass just adds
+nothing rather than erasing prior finds. `api/reports.ts` (Vercel) had no equivalent: each 2-min
+cache refresh called `aggregateAndClassify()` fresh and fully *replaced* the cache with whatever
+that one pass returned — and a single pass (8s-per-source timeout across 10 sources including
+several rss-parser feeds) very often nets zero *new* India-disaster items simply because
+real-time India disaster news is sparse, not because anything is broken. Zero live items on that
+pass meant an immediate, total fallback to `getFreshMockReports()` (the same 60 curated demo
+reports, just re-timestamped) — so production looked permanently stuck on demo content almost
+all the time, exactly matching the screenshot (KSDMA/Army/Brahmaputra headlines = the demo
+snapshot's `rep-001..003` etc., not live ingestion). Fixed by adding an accumulating
+`accumulatedLive` map in `api/reports.ts` (headline-keyed, capped by count and age) that every
+pass merges new finds into rather than replacing — see Known Gotchas #7 for the mechanism and
+why it must not be reverted to a full-replace cache. This is the serverless-appropriate analog
+of dev's SQLite accumulation; it resets on cold start (acceptable, same category of limitation
+as gotcha #4) but persists across the far more common case of a warm instance serving many
+requests. Not yet verified against an actual Vercel deployment (no `vercel` CLI / linked project
+in this environment) — verify post-deploy that `mode` reads `'live'` and headlines actually
+rotate over a 10+ minute observation window, not just that the build succeeds.
 
 **Known risk for a live demo, not fully closed**: `classifyCategory`'s bare-substring keyword
 matching still occasionally miscategorizes borderline real news (crime/political stories that

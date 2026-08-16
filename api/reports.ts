@@ -10,6 +10,12 @@ const CACHE_TTL_MS = 2 * 60 * 1000;
 // still honestly live, not demo. Only a total failure/empty result triggers the fallback.
 const LIVE_MIN_COUNT = 1;
 
+// Vercel has no database (see CLAUDE.md), so accumulated live reports only live as long as
+// this warm instance does. Cap it so a long-lived instance doesn't grow unbounded, and drop
+// anything older than a day so accumulation doesn't paper over a genuinely dead feed forever.
+const MAX_ACCUMULATED_REPORTS = 300;
+const MAX_ACCUMULATED_AGE_MS = 24 * 60 * 60 * 1000;
+
 export type IngestionMode = 'live' | 'demo';
 
 export interface ReportsPayload {
@@ -25,6 +31,34 @@ export interface ReportsPayload {
 let cache: { payload: ReportsPayload; fetchedAt: number } | null = null;
 let inFlight: Promise<ReportsPayload> | null = null;
 
+// Accumulates every genuinely live report ever seen by this warm instance, the serverless
+// analog of server/pipeline.ts inserting into SQLite on every 3-minute run: a single 8s-per-
+// source ingestion pass frequently comes back with zero *new* items (sparse real-time India
+// disaster news, tight timeouts across 10 sources), and without this the cache used to fully
+// overwrite itself with the static demo snapshot on every such pass — real reports never had
+// a chance to accumulate the way they do locally, so production looked permanently "stuck" on
+// the same 60 demo headlines while localhost (long-running, persistent SQLite) looked live.
+let accumulatedLive: Map<string, DisasterReport> = new Map();
+
+function mergeLiveReports(freshlyFetched: DisasterReport[]): DisasterReport[] {
+  const cutoff = Date.now() - MAX_ACCUMULATED_AGE_MS;
+  for (const report of freshlyFetched) {
+    accumulatedLive.set(report.headline.toLowerCase().trim(), report);
+  }
+  for (const [key, report] of accumulatedLive) {
+    if (new Date(report.timestamp).getTime() < cutoff) {
+      accumulatedLive.delete(key);
+    }
+  }
+  const merged = Array.from(accumulatedLive.values());
+  merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  if (merged.length > MAX_ACCUMULATED_REPORTS) {
+    merged.length = MAX_ACCUMULATED_REPORTS;
+    accumulatedLive = new Map(merged.map((r) => [r.headline.toLowerCase().trim(), r]));
+  }
+  return merged;
+}
+
 function demoPayload(): ReportsPayload {
   return {
     reports: getFreshMockReports(),
@@ -38,11 +72,16 @@ function demoPayload(): ReportsPayload {
  * Demo-safety fallback (required for live judging demos — see CLAUDE.md "Demo-safety mode").
  * Live ingestion failing, timing out, or coming back empty must never blank the dashboard —
  * it falls back to a curated, realistic snapshot instead, honestly labeled via `mode`.
+ *
+ * Falls back to demo only if this instance has *never* accumulated a live report — once any
+ * real report has been seen, it stays in the accumulated set (see mergeLiveReports) so a
+ * single quiet ingestion pass doesn't yank the dashboard back to static demo content.
  */
 async function refreshReports(): Promise<ReportsPayload> {
-  const live = await aggregateAndClassify();
-  if (live.length >= LIVE_MIN_COUNT) {
-    return { reports: live, mode: 'live', liveCount: live.length, generatedAt: new Date().toISOString() };
+  const freshlyFetched = await aggregateAndClassify();
+  const merged = mergeLiveReports(freshlyFetched);
+  if (merged.length >= LIVE_MIN_COUNT) {
+    return { reports: merged, mode: 'live', liveCount: merged.length, generatedAt: new Date().toISOString() };
   }
   return demoPayload();
 }
