@@ -1,19 +1,8 @@
-import type { DisasterReport } from '../src/types/incident';
 import { insertReport, saveClusters, queryReports, purgeNonIndiaReports, purgeInvalidClusters } from './db';
 import { getFreshMockReports } from '../src/data/mockReports';
 import { extractLocation, isStrictIndiaDisaster, cleanText } from './classifier';
 import { performSmartClustering } from '../src/lib/clustering';
-import { classifyReportsBatch } from './services/aiClassifier';
-import { fetchUSGSReports } from './adapters/usgsAdapter';
-import { fetchEONETReports } from './adapters/eonetAdapter';
-import { fetchGDACSReports } from './adapters/gdacsAdapter';
-import { fetchReliefWebReports } from './adapters/reliefwebAdapter';
-import { fetchMastodonReports } from './adapters/mastodonAdapter';
-import { fetchBlueskyReports } from './adapters/blueskyAdapter';
-import { fetchRSSReports } from './adapters/rssAdapter';
-import { fetchRedditReports } from './adapters/redditAdapter';
-import { fetchNewsAPIReports } from './adapters/newsApiAdapter';
-import { fetchGNewsReports } from './adapters/gnewsAdapter';
+import { aggregateAndClassify } from './aggregate';
 
 /**
  * Execute the Central Ingestion Pipeline across all 10 data sources
@@ -21,61 +10,10 @@ import { fetchGNewsReports } from './adapters/gnewsAdapter';
 export async function runPipeline(): Promise<void> {
   console.log('[Pipeline] 🚀 Starting real-time India disaster data ingestion run...');
 
-  // 1. Fetch raw telemetry from all adapters concurrently
-  const [
-    usgs,
-    eonet,
-    gdacs,
-    reliefweb,
-    mastodon,
-    bluesky,
-    rss,
-    reddit,
-    newsApi,
-    gnews,
-  ] = await Promise.all([
-    fetchUSGSReports(),
-    fetchEONETReports(),
-    fetchGDACSReports(),
-    fetchReliefWebReports(),
-    fetchMastodonReports(),
-    fetchBlueskyReports(),
-    fetchRSSReports(),
-    fetchRedditReports(),
-    fetchNewsAPIReports(),
-    fetchGNewsReports(),
-  ]);
-
-  const allFetched: DisasterReport[] = [
-    ...usgs,
-    ...eonet,
-    ...gdacs,
-    ...reliefweb,
-    ...mastodon,
-    ...bluesky,
-    ...rss,
-    ...reddit,
-    ...newsApi,
-    ...gnews,
-  ];
-
-  console.log(`[Pipeline] 📥 Ingested ${allFetched.length} raw reports across 10 open sources.`);
-
-  // Clean HTML junk from all fetched dispatches
-  allFetched.forEach((r) => {
-    r.headline = cleanText(r.headline);
-    r.description = cleanText(r.description);
-  });
-
-  // 2. Strict India Disaster Relevance Filter (Discard foreign conflicts & non-disaster news)
-  const indiaOnlyFetched = allFetched.filter((rep) => 
-    isStrictIndiaDisaster(rep.headline, rep.description)
-  );
-
-  console.log(`[Pipeline] 🇮🇳 Filtered down to ${indiaOnlyFetched.length} verified India-related disaster dispatches.`);
-
-  // 2.5 AI Classification & Entity Extraction Service (Gemini + Keyword Fallback)
-  const classifiedFetched = await classifyReportsBatch(indiaOnlyFetched);
+  // 1-2.5. Fetch, filter to India disasters, and classify (shared with the Vercel serverless
+  // endpoint in api/reports.ts — see server/aggregate.ts).
+  const classifiedFetched = await aggregateAndClassify();
+  console.log(`[Pipeline] 📥 Ingested ${classifiedFetched.length} classified India disaster dispatches across 10 open sources.`);
 
   // Seed baseline mock dataset if DB is empty
   const existingDBReports = queryReports();

@@ -120,9 +120,15 @@ export const DisasterCard: React.FC<DisasterCardProps> = ({ cluster, onClick }) 
   };
 
   const handleClick = () => {
-    console.log(`[DisasterCard] Clicked incident cluster ID: ${cluster.clusterId}`);
     if (onClick) {
       onClick(cluster.clusterId);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleClick();
     }
   };
 
@@ -131,9 +137,11 @@ export const DisasterCard: React.FC<DisasterCardProps> = ({ cluster, onClick }) 
   return (
     <article
       onClick={handleClick}
+      onKeyDown={handleKeyDown}
       tabIndex={0}
       role="button"
-      className="group relative bg-[#FFFFFF] border-2 border-[#E4E7EC] hover:border-[#1E3A5F] rounded-xl px-5 py-5 transition-all hover:shadow-md cursor-pointer flex flex-col justify-between font-sans-ui outline-hidden min-h-[340px] space-y-3.5 overflow-hidden"
+      aria-label={`${sevCfg.label} ${categoryLabel} incident in ${stateName}: ${cleanHeadline(representativeReport.headline)}. ${cluster.reportCount} ${cluster.reportCount === 1 ? 'report' : 'reports'}. View details.`}
+      className="group relative bg-[#FFFFFF] border-2 border-[#E4E7EC] hover:border-[#1E3A5F] focus-visible:border-[#1E3A5F] rounded-xl px-5 py-5 transition-all hover:shadow-md cursor-pointer flex flex-col justify-between font-sans-ui outline-hidden focus-visible:outline-2 focus-visible:outline-[#1E3A5F] focus-visible:outline-offset-2 min-h-[340px] space-y-3.5 overflow-hidden"
     >
       {/* Functional Left Edge Severity Bar */}
       <div

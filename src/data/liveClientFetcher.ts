@@ -37,11 +37,14 @@ const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutM
 };
 
 /**
- * Live Client Telemetry Fetcher: Fetches real-time open-source disaster & news feeds
- * directly in the browser when backend Express server is unreachable (e.g. Vercel deployment)
+ * Live Client Telemetry Fetcher: last-resort direct-from-browser fetch, used only when the
+ * backend (/api/reports — see src/data/mockApi.ts) is genuinely unreachable. Deliberately
+ * limited to sources that are CORS-open and need no API key (USGS, NASA EONET) plus GNews when
+ * the user has configured a real VITE_GNEWS_KEY — no hardcoded fallback key ships in the bundle,
+ * and no third-party CORS proxy is used (see CLAUDE.md Known Gotchas for why that used to bite).
  */
 export async function fetchLiveClientTelemetry(): Promise<DisasterReport[]> {
-  console.log('[Live Client Telemetry] 🌐 Fetching live real-time disaster dispatches...');
+  console.log('[Live Client Telemetry] 🌐 Backend unreachable — fetching fallback telemetry directly...');
 
   const results: DisasterReport[] = [];
 
@@ -50,7 +53,6 @@ export async function fetchLiveClientTelemetry(): Promise<DisasterReport[]> {
     fetchUSGSClient(),
     fetchEONETClient(),
     fetchGNewsClient(),
-    fetchRSSClient(),
   ]);
 
   for (const s of settled) {
@@ -92,9 +94,12 @@ async function fetchUSGSClient(): Promise<DisasterReport[]> {
       const mag = feat.properties?.mag || 0;
       const time = feat.properties?.time ? new Date(feat.properties.time).toISOString() : new Date().toISOString();
 
-      // South Asia bounding box: lat 5-38, lng 65-98
+      // South Asia bounding box: lat 5-38, lng 65-98. No magnitude bypass — this fetcher only
+      // runs as a fallback when the real backend is unreachable, so a large-but-irrelevant
+      // global quake (e.g. Indonesia) must never slip through just because it's big; it isn't
+      // an India disaster. See CLAUDE.md Investigation Log for the demo where this was caught.
       const isSouthAsia = lat >= 5 && lat <= 38 && lng >= 65 && lng <= 98;
-      if (!isSouthAsia && mag < 4.5) continue;
+      if (!isSouthAsia) continue;
 
       const loc = extractLocation(place);
       const state = loc.state !== 'Madhya Pradesh' ? loc.state : 'India';
@@ -159,6 +164,12 @@ async function fetchEONETClient(): Promise<DisasterReport[]> {
 
       const loc = extractLocation(title);
       const time = lastGeo?.date ? new Date(lastGeo.date).toISOString() : new Date().toISOString();
+      const description = `NASA EONET detected active event: "${title}". Category: ${categories[0]?.title || 'Natural Disaster'}.`;
+
+      // EONET is a global satellite feed — most events are NOT in India (see CLAUDE.md
+      // Investigation Log: a Colorado wildfire and an Indonesian quake both slipped through
+      // here before this filter was added). Same relevance gate the server-side adapters use.
+      if (!isStrictIndiaDisaster(title, description)) continue;
 
       reports.push({
         id: `nasa-eonet-${ev.id}`,
@@ -171,7 +182,7 @@ async function fetchEONETClient(): Promise<DisasterReport[]> {
           state: loc.state,
         },
         headline: title,
-        description: `NASA EONET detected active event: "${title}". Category: ${categories[0]?.title || 'Natural Disaster'}.`,
+        description,
         source: { type: 'official', name: 'NASA EONET Satellite Tracker', verified: true },
         credibilityScore: calculateCredibility({ type: 'official', name: 'NASA', verified: true }),
         language: 'en',
@@ -190,7 +201,9 @@ async function fetchEONETClient(): Promise<DisasterReport[]> {
  * 3. GNews API – live Indian disaster news
  */
 async function fetchGNewsClient(): Promise<DisasterReport[]> {
-  const apiKey = getEnvVar('VITE_GNEWS_KEY') || getEnvVar('GNEWS_KEY') || '1866b0c31d95e5e2e27ba553068a7c46';
+  // Client-only var; never fall back to a literal key here — anything in this file ships
+  // in the public bundle, so a hardcoded key is a public key (see CLAUDE.md Known Gotchas).
+  const apiKey = getEnvVar('VITE_GNEWS_KEY');
   if (!apiKey) return [];
 
   try {
@@ -251,76 +264,3 @@ async function fetchGNewsClient(): Promise<DisasterReport[]> {
   }
 }
 
-/**
- * 4. Live Indian News RSS Feeds via allorigins CORS proxy
- */
-async function fetchRSSClient(): Promise<DisasterReport[]> {
-  const rssUrls = [
-    { url: 'https://www.thehindu.com/news/national/feeder/default.rss', name: 'The Hindu National' },
-    { url: 'https://www.thehindu.com/news/states/feeder/default.rss', name: 'The Hindu States' },
-    { url: 'https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms', name: 'Times of India' },
-    { url: 'https://feeds.feedburner.com/ndtvnews-india-news', name: 'NDTV India' },
-  ];
-
-  const reports: DisasterReport[] = [];
-
-  // Use Promise.allSettled so one slow feed doesn't block others
-  const feedResults = await Promise.allSettled(
-    rssUrls.map(async (feed) => {
-      const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(feed.url)}`;
-      const res = await fetchWithTimeout(proxyUrl, {}, 8000);
-      if (!res.ok) return [];
-
-      const xmlText = await res.text();
-      const items: DisasterReport[] = [];
-
-      // Regex-based XML parsing (no DOMParser dependency)
-      const itemMatches = xmlText.match(/<item[\s\S]*?<\/item>/gi) || [];
-
-      for (const itemXml of itemMatches.slice(0, 20)) {
-        const titleMatch = itemXml.match(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
-        const descMatch = itemXml.match(/<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
-        const pubDateMatch = itemXml.match(/<pubDate>([\s\S]*?)<\/pubDate>/i);
-        const linkMatch = itemXml.match(/<link>([\s\S]*?)<\/link>/i);
-
-        const title = cleanText(titleMatch ? titleMatch[1] : '');
-        const desc = cleanText(descMatch ? descMatch[1] : title);
-        const pubDate = pubDateMatch ? pubDateMatch[1].trim() : undefined;
-        const link = linkMatch ? linkMatch[1].trim() : undefined;
-
-        if (!title || !isStrictIndiaDisaster(title, desc)) continue;
-
-        const category = classifyCategory(`${title} ${desc}`);
-        if (!category) continue;
-
-        const loc = extractLocation(`${title} ${desc}`);
-        const time = pubDate ? new Date(pubDate).toISOString() : new Date().toISOString();
-
-        items.push({
-          id: `client-rss-${encodeURIComponent(link || title).slice(0, 32)}`,
-          clusterId: `cluster-rss-${encodeURIComponent(title).slice(0, 32)}`,
-          category,
-          severity: inferSeverity(`${title} ${desc}`),
-          location: loc,
-          headline: title,
-          description: desc.slice(0, 280),
-          source: { type: 'news', name: feed.name, verified: true, handleOrUrl: link },
-          credibilityScore: 90,
-          language: 'en',
-          timestamp: time,
-        });
-      }
-
-      console.log(`[Live Client Telemetry] ${feed.name}: ${items.length} India disaster articles.`);
-      return items;
-    })
-  );
-
-  for (const result of feedResults) {
-    if (result.status === 'fulfilled') {
-      reports.push(...result.value);
-    }
-  }
-
-  return reports;
-}

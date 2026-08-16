@@ -1,5 +1,6 @@
 import type { DisasterReport } from '../../src/types/incident';
 import { calculateCredibility, inferSeverity, extractLocation, classifyCategory } from '../classifier';
+import { hashId } from '../hashId';
 
 export async function fetchGNewsReports(): Promise<DisasterReport[]> {
   const apiKey = process.env.GNEWS_KEY;
@@ -30,8 +31,8 @@ export async function fetchGNewsReports(): Promise<DisasterReport[]> {
       const sourceName = art.source?.name || 'GNews Source';
 
       reports.push({
-        id: `gnews-${Buffer.from(art.url || title).toString('hex').slice(0, 16)}`,
-        clusterId: `cluster-gnews-${Buffer.from(title).toString('hex').slice(0, 16)}`,
+        id: `gnews-${hashId(art.url || title)}`,
+        clusterId: `cluster-gnews-${hashId(title)}`,
         category,
         severity: inferSeverity(fullText),
         location: loc,

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { FilterState, CategoryType, SeverityLevel } from '../types/incident';
+import { isDemoModeForced, setDemoModeForced as persistDemoModeForced } from '../data/demoMode';
 
 interface DashboardStoreState {
   // Filter state
@@ -13,6 +14,15 @@ interface DashboardStoreState {
   // Live simulation mode
   liveMode: boolean;
   lastUpdated: Date;
+
+  // Data ingestion status: whether the current report set is genuinely live or the demo-safety
+  // fallback snapshot, plus how many real live reports actually came through this fetch cycle.
+  ingestionMode: 'live' | 'demo' | null;
+  ingestionLiveCount: number;
+  demoModeForced: boolean;
+
+  // Dashboard view mode: card grid (default) or full incident map
+  viewMode: 'cards' | 'map';
 
   // Actions
   setCategoryFilter: (categories: CategoryType[]) => void;
@@ -31,6 +41,9 @@ interface DashboardStoreState {
   closeDetail: () => void;
   toggleLiveMode: () => void;
   triggerRefresh: () => void;
+  setIngestionStatus: (mode: 'live' | 'demo', liveCount: number) => void;
+  setDemoModeForced: (forced: boolean) => void;
+  setViewMode: (mode: 'cards' | 'map') => void;
 }
 
 const DEFAULT_FILTERS: FilterState = {
@@ -51,6 +64,10 @@ export const useDashboardStore = create<DashboardStoreState>((set) => ({
   isDetailOpen: false,
   liveMode: true,
   lastUpdated: new Date(),
+  ingestionMode: null,
+  ingestionLiveCount: 0,
+  demoModeForced: isDemoModeForced(),
+  viewMode: 'cards',
 
   setCategoryFilter: (categories) =>
     set((state) => ({ filters: { ...state.filters, categories } })),
@@ -108,4 +125,13 @@ export const useDashboardStore = create<DashboardStoreState>((set) => ({
   toggleLiveMode: () => set((state) => ({ liveMode: !state.liveMode })),
 
   triggerRefresh: () => set({ lastUpdated: new Date() }),
+
+  setIngestionStatus: (mode, liveCount) => set({ ingestionMode: mode, ingestionLiveCount: liveCount }),
+
+  setDemoModeForced: (forced) => {
+    persistDemoModeForced(forced);
+    set({ demoModeForced: forced });
+  },
+
+  setViewMode: (viewMode) => set({ viewMode }),
 }));

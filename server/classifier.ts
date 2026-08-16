@@ -1,17 +1,51 @@
 import type { CategoryType, SeverityLevel, LocationInfo, ReportSource } from '../src/types/incident';
 
+/**
+ * Whole-word/whole-phrase match — NOT `.includes()`. A bare substring check matches inside
+ * unrelated words ('fire' inside "fired"/"misfire", 'rains' inside "brains", 'dead' inside
+ * "deadline", 'up'/'met' inside "erupt"/"disrupted" — the last two already caused real false
+ * positives in production, see CLAUDE.md Investigation Log 2026-08-15/16). Every keyword list in
+ * this file is matched through this helper for that reason. Compiled regexes are cached since
+ * these run over every fetched report on every ingestion pass.
+ *
+ * This does NOT solve keywords that are legitimate whole words in an unrelated context (e.g.
+ * 'hospital' or 'depression' appearing in non-disaster news) — that's a semantic ambiguity a
+ * keyword matcher can't resolve, not a substring bug. See CLAUDE.md Known Gotchas.
+ */
+const keywordRegexCache = new Map<string, RegExp>();
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+function buildKeywordRegex(keyword: string): RegExp {
+  // \b only makes sense between a \w and \W character — a handful of terms start or end with
+  // punctuation on purpose ('#inwx', 'udise+'), where a \b on that side would never match at
+  // all (both the punctuation and typical surrounding whitespace are \W, so no transition
+  // exists). Only add the boundary on sides that actually start/end with a word character.
+  const prefix = /^\w/.test(keyword) ? '\\b' : '';
+  const suffix = /\w$/.test(keyword) ? '\\b' : '';
+  return new RegExp(`${prefix}${escapeRegExp(keyword)}${suffix}`);
+}
+export function containsKeyword(lowerText: string, keyword: string): boolean {
+  let re = keywordRegexCache.get(keyword);
+  if (!re) {
+    re = buildKeywordRegex(keyword);
+    keywordRegexCache.set(keyword, re);
+  }
+  return re.test(lowerText);
+}
+
 // Keywords dictionary for category classification (Expanded for live news dispatches)
 const CATEGORY_KEYWORDS: Record<CategoryType, string[]> = {
   flood: [
-    'flood', 'flooding', 'flooded', 'inundation', 'waterlogging', 'waterlogged', 'submerged', 
-    'overflow', 'overflowing', 'brahmaputra', 'ganga', 'yamuna', 'surge', 'deluge', 'drowning', 
-    'drowned', 'heavy rain', 'heavy rainfall', 'rivers rise', 'danger mark', 'downpour', 
-    'monsoon rain', 'torrents', 'dam opened', 'sluice gates', 'inundated', 'water level', 
-    'rain alert', 'rains', 'waterlogging in'
+    'flood', 'flooding', 'flooded', 'floodwater', 'floodwaters', 'inundation', 'waterlogging',
+    'waterlogged', 'submerged', 'overflow', 'overflowing', 'brahmaputra', 'ganga', 'yamuna',
+    'surge', 'deluge', 'drowning', 'drowned', 'heavy rain', 'heavy rainfall', 'rivers rise',
+    'danger mark', 'downpour', 'monsoon rain', 'torrents', 'dam opened', 'sluice gates',
+    'inundated', 'water level', 'rain alert', 'rains', 'waterlogging in'
   ],
   fire: [
-    'fire', 'blaze', 'blazing', 'explosion', 'flames', 'chemical leak', 'inferno', 
-    'combustion', 'smoke', 'gas leak', 'toxic fumes', 'firefighters', 'fire tender'
+    'fire', 'wildfire', 'bushfire', 'blaze', 'blazing', 'explosion', 'flames', 'chemical leak',
+    'inferno', 'combustion', 'smoke', 'gas leak', 'toxic fumes', 'firefighters', 'fire tender'
   ],
   earthquake: [
     'earthquake', 'tremor', 'quake', 'seismic', 'epicenter', 'aftershock', 'faultline', 
@@ -117,6 +151,30 @@ export function cleanText(text: string): string {
     .trim();
 }
 
+// Explicit Non-Disaster / Political / Protest / Foreign Rejection.
+// SINGLE SOURCE OF TRUTH: src/lib/clustering.ts's isDisasterTopic() re-checks against this same
+// list at cluster time (a second, lighter safety net after this function's fuller ingest-time
+// check) — it imports FORBIDDEN_TERMS from here rather than keeping its own copy, after the two
+// drifted out of sync once already (see CLAUDE.md Investigation Log).
+export const FORBIDDEN_TERMS = [
+  'teacher', 'assignment', 'school enrolment', 'udise+', 'student enrollment',
+  'protest', 'lathi-charge', 'lathi', 'protesters', 'assembly march', 'demonstration',
+  'cricket', 'ipl', 'bollywood', 'movie', 'actor', 'actress', 'box office',
+  'election', 'political party', 'speech', 'modi vs', 'rahul gandhi', 'bjp', 'congress',
+  'hindutva', 'ideologue', 'mcbroom', 'spider-man', 'controversy', 'land dispute', 'firing along',
+  'stock market', 'sensex', 'nifty', 'share price', 'crypto', 'iphone', 'gadget', 'smartphone',
+  'gaza', 'israel', 'netanyahu', 'hamas', 'russia', 'ukraine', 'kharkiv', 'odesa',
+  'moldova', 'florida', 'california', 'hawaii', 'naalehu', 'alaska', 'beijing', 'taiwan', 'trump', 'biden',
+  'nws', 'flashfloodwarning', '#inwx', '#ffw', 'lake, in', 'porter, in', 'indiana',
+  'denmark', 'skjern', 'hoboken', 'resiliencity', 'national coastline zone', 'central command zone',
+  // Violent crime / assassination-adjacent stories legitimately mention 'hospital', 'injured',
+  // 'critical condition' etc. — the same words genuine disaster medical-emergency reports use —
+  // so they were passing classifyCategory('medical') despite not being a disaster (see CLAUDE.md
+  // Investigation Log 2026-08-16, the "attacker... kirpan" false positive).
+  'attacker', 'assassination', 'assassin', 'gunman', 'stabbed', 'stabbing', 'kirpan attack',
+  'shot at', 'shooting incident', 'murder', 'homicide'
+];
+
 /**
  * Strict India Disaster Validator: Ensures news is BOTH a genuine disaster AND India-centric
  */
@@ -126,20 +184,7 @@ export function isStrictIndiaDisaster(headline: string, description: string): bo
   const fullText = `${cleanedHeadline} ${cleanedDesc}`.toLowerCase();
 
   // 1. Explicit Non-Disaster / Political / Protest / Foreign Rejection
-  const forbiddenTerms = [
-    'teacher', 'assignment', 'school enrolment', 'udise+', 'student enrollment',
-    'protest', 'lathi-charge', 'lathi', 'protesters', 'assembly march', 'demonstration',
-    'cricket', 'ipl', 'bollywood', 'movie', 'actor', 'actress', 'box office',
-    'election', 'political party', 'speech', 'modi vs', 'rahul gandhi', 'bjp', 'congress',
-    'hindutva', 'ideologue', 'mcbroom', 'spider-man', 'controversy', 'land dispute', 'firing along',
-    'stock market', 'sensex', 'nifty', 'share price', 'crypto', 'iphone', 'gadget', 'smartphone',
-    'gaza', 'israel', 'netanyahu', 'hamas', 'russia', 'ukraine', 'kharkiv', 'odesa',
-    'moldova', 'florida', 'california', 'hawaii', 'naalehu', 'alaska', 'beijing', 'taiwan', 'trump', 'biden',
-    'nws', 'flashfloodwarning', '#inwx', '#ffw', 'lake, in', 'porter, in', 'indiana',
-    'denmark', 'skjern', 'hoboken', 'resiliencity', 'national coastline zone', 'central command zone'
-  ];
-
-  if (forbiddenTerms.some((term) => fullText.includes(term))) {
+  if (FORBIDDEN_TERMS.some((term) => containsKeyword(fullText, term))) {
     return false;
   }
 
@@ -149,9 +194,14 @@ export function isStrictIndiaDisaster(headline: string, description: string): bo
     return false;
   }
 
-  // 3. Must match an explicit Indian location or mention India/NDRF/SDRF/Indian agencies
-  const matchesIndianLocation = INDIAN_LOCATIONS.some((loc) => fullText.includes(loc.keyword));
-  const hasExplicitIndiaAgency = fullText.includes('india') || fullText.includes('indian') || fullText.includes('ndrf') || fullText.includes('sdrf') || fullText.includes('ksdma') || fullText.includes('asdma') || fullText.includes('osdma') || fullText.includes('imd') || fullText.includes('met') || fullText.includes('kerala') || fullText.includes('assam') || fullText.includes('delhi') || fullText.includes('mumbai') || fullText.includes('gujarat') || fullText.includes('up') || fullText.includes('bihar') || fullText.includes('himachal') || fullText.includes('uttarakhand');
+  // 3. Must match an explicit Indian location or mention India/NDRF/SDRF/Indian agencies.
+  // NOTE: 'up' (Uttar Pradesh) and 'met' (IMD) were previously in this list as bare .includes()
+  // checks — both are common English substrings ("erupt", "disrupted", "sometimes", "met with"),
+  // so they made this check pass for almost any English disaster text regardless of country.
+  // Full "uttar pradesh" is already covered via INDIAN_LOCATIONS below; 'imd' covers the IMD case.
+  const matchesIndianLocation = INDIAN_LOCATIONS.some((loc) => containsKeyword(fullText, loc.keyword));
+  const indiaAgencyTerms = ['india', 'indian', 'ndrf', 'sdrf', 'ksdma', 'asdma', 'osdma', 'imd', 'kerala', 'assam', 'delhi', 'mumbai', 'gujarat', 'bihar', 'himachal', 'uttarakhand'];
+  const hasExplicitIndiaAgency = indiaAgencyTerms.some((term) => containsKeyword(fullText, term));
 
   if (!matchesIndianLocation && !hasExplicitIndiaAgency) {
     return false;
@@ -171,7 +221,7 @@ export function classifyCategory(text: string): CategoryType | null {
   const lower = text.toLowerCase();
 
   for (const [cat, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-    if (keywords.some((kw) => lower.includes(kw))) {
+    if (keywords.some((kw) => containsKeyword(lower, kw))) {
       return cat as CategoryType;
     }
   }
@@ -185,35 +235,18 @@ export function classifyCategory(text: string): CategoryType | null {
 export function inferSeverity(text: string): SeverityLevel {
   const lower = text.toLowerCase();
 
-  if (
-    lower.includes('critical') ||
-    lower.includes('fatal') ||
-    lower.includes('trapped') ||
-    lower.includes('evacuating') ||
-    lower.includes('massive') ||
-    lower.includes('emergency') ||
-    lower.includes('dead') ||
-    lower.includes('devastating') ||
-    lower.includes('danger mark') ||
-    lower.includes('red alert')
-  ) {
+  const criticalTerms = ['critical', 'fatal', 'trapped', 'evacuating', 'massive', 'emergency', 'dead', 'devastating', 'danger mark', 'red alert'];
+  if (criticalTerms.some((term) => containsKeyword(lower, term))) {
     return 'critical';
   }
 
-  if (
-    lower.includes('high') ||
-    lower.includes('severe') ||
-    lower.includes('warning') ||
-    lower.includes('alert') ||
-    lower.includes('disrupted') ||
-    lower.includes('submerged') ||
-    lower.includes('orange alert') ||
-    lower.includes('waterlogging')
-  ) {
+  const highTerms = ['high', 'severe', 'warning', 'alert', 'disrupted', 'submerged', 'orange alert', 'waterlogging'];
+  if (highTerms.some((term) => containsKeyword(lower, term))) {
     return 'high';
   }
 
-  if (lower.includes('moderate') || lower.includes('minor') || lower.includes('rising')) {
+  const moderateTerms = ['moderate', 'minor', 'rising'];
+  if (moderateTerms.some((term) => containsKeyword(lower, term))) {
     return 'moderate';
   }
 
@@ -227,7 +260,7 @@ export function extractLocation(text: string): LocationInfo {
   const lower = text.toLowerCase();
 
   for (const loc of INDIAN_LOCATIONS) {
-    if (lower.includes(loc.keyword)) {
+    if (containsKeyword(lower, loc.keyword)) {
       return {
         lat: loc.lat,
         lng: loc.lng,
@@ -237,11 +270,11 @@ export function extractLocation(text: string): LocationInfo {
     }
   }
 
-  if (lower.includes('madhya pradesh') || lower.includes('m.p.')) return { lat: 22.9734, lng: 78.6569, placeName: 'Madhya Pradesh Sector', state: 'Madhya Pradesh' };
-  if (lower.includes('uttar pradesh') || lower.includes('u.p.')) return { lat: 26.8467, lng: 80.9462, placeName: 'Uttar Pradesh Sector', state: 'Uttar Pradesh' };
-  if (lower.includes('himachal pradesh') || lower.includes('h.p.')) return { lat: 31.1048, lng: 77.1734, placeName: 'Himachal Pradesh Sector', state: 'Himachal Pradesh' };
-  if (lower.includes('arunachal pradesh')) return { lat: 28.2180, lng: 94.7278, placeName: 'Arunachal Sector', state: 'Arunachal Pradesh' };
-  if (lower.includes('andhra pradesh')) return { lat: 15.9129, lng: 79.7400, placeName: 'Andhra Sector', state: 'Andhra Pradesh' };
+  if (containsKeyword(lower, 'madhya pradesh') || containsKeyword(lower, 'm.p.')) return { lat: 22.9734, lng: 78.6569, placeName: 'Madhya Pradesh Sector', state: 'Madhya Pradesh' };
+  if (containsKeyword(lower, 'uttar pradesh') || containsKeyword(lower, 'u.p.')) return { lat: 26.8467, lng: 80.9462, placeName: 'Uttar Pradesh Sector', state: 'Uttar Pradesh' };
+  if (containsKeyword(lower, 'himachal pradesh') || containsKeyword(lower, 'h.p.')) return { lat: 31.1048, lng: 77.1734, placeName: 'Himachal Pradesh Sector', state: 'Himachal Pradesh' };
+  if (containsKeyword(lower, 'arunachal pradesh')) return { lat: 28.2180, lng: 94.7278, placeName: 'Arunachal Sector', state: 'Arunachal Pradesh' };
+  if (containsKeyword(lower, 'andhra pradesh')) return { lat: 15.9129, lng: 79.7400, placeName: 'Andhra Sector', state: 'Andhra Pradesh' };
 
   return {
     lat: 20.5937,

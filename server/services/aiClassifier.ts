@@ -96,7 +96,7 @@ export async function classifyReportsBatch(reports: DisasterReport[]): Promise<D
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-flash-latest',
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.1,

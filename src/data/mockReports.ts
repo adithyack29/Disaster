@@ -969,5 +969,3 @@ export function getFreshMockReports(): DisasterReport[] {
   },
   ];
 }
-
-export const INITIAL_MOCK_REPORTS: DisasterReport[] = getFreshMockReports();

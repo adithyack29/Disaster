@@ -123,6 +123,8 @@ export const CategoryFilterBar: React.FC = () => {
         <button
           onClick={() => setIsSeverityOpen(!isSeverityOpen)}
           title="Filter by severity level"
+          aria-label="Filter by severity level"
+          aria-expanded={isSeverityOpen}
           className={`p-2 rounded-full border transition-all cursor-pointer flex items-center gap-1 ${
             filters.severities.length > 0 || filters.verifiedOnly
               ? 'bg-[#1E3A5F] text-white border-[#1E3A5F]'

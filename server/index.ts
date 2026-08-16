@@ -1,11 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { queryReports, db } from './db';
+import { queryReports } from './db';
 import { runPipeline } from './pipeline';
 import { performSmartClustering } from '../src/lib/clustering';
 import { generateAISituationBrief } from './services/aiSituationBrief';
-import type { FilterState, DisasterReport, IncidentCluster, DashboardStats } from '../src/types/incident';
+import { getFreshMockReports } from '../src/data/mockReports';
+import type { DisasterReport, DashboardStats } from '../src/types/incident';
 
 dotenv.config();
 
@@ -24,65 +25,46 @@ setInterval(() => {
 }, 3 * 60 * 1000);
 
 /**
- * Filter helper matching frontend logic
+ * A report is "live" if it came from a real adapter this session, vs. the curated demo-safety
+ * seed data (server/pipeline.ts inserts baseline mock reports with `rep-*` IDs — see
+ * src/data/mockReports.ts). Filtering is done client-side (src/data/mockApi.ts's applyFilters)
+ * — this endpoint intentionally has no server-side filter params to avoid the two drifting
+ * apart, which already happened once (see CLAUDE.md Investigation Log).
  */
-function filterReports(reports: DisasterReport[], filters?: Partial<FilterState>): DisasterReport[] {
-  if (!filters) return reports;
-
-  return reports.filter((r) => {
-    if (filters.categories && filters.categories.length > 0) {
-      if (!filters.categories.includes(r.category)) return false;
-    }
-    if (filters.severities && filters.severities.length > 0) {
-      if (!filters.severities.includes(r.severity)) return false;
-    }
-    if (filters.verifiedOnly && !r.source.verified) return false;
-    if (filters.region && filters.region !== 'all') {
-      if (r.location.state.toLowerCase() !== filters.region.toLowerCase()) return false;
-    }
-    if (filters.sourceType && filters.sourceType !== 'all') {
-      if (r.source.type !== filters.sourceType) return false;
-    }
-    if (filters.searchQuery && filters.searchQuery.trim() !== '') {
-      const q = filters.searchQuery.toLowerCase().trim();
-      const match =
-        r.headline.toLowerCase().includes(q) ||
-        r.description.toLowerCase().includes(q) ||
-        r.location.placeName.toLowerCase().includes(q) ||
-        r.source.name.toLowerCase().includes(q);
-      if (!match) return false;
-    }
-    return true;
-  });
+function isLiveReport(report: DisasterReport): boolean {
+  return !report.id.startsWith('rep-');
 }
 
 // REST Endpoints
 
 /**
  * GET /api/reports
+ *
+ * Demo-safety contract (mirrors api/reports.ts on Vercel — see CLAUDE.md): if the DB currently
+ * holds any live-ingested reports, serve those (mode: 'live'). Otherwise — pipeline hasn't run
+ * yet, every source failed, or this is a fresh demo-mode DB — serve the curated snapshot
+ * (mode: 'demo'), freshly re-timestamped so it always reads as "now" rather than stale seed data.
  */
-app.get('/api/reports', (req, res) => {
+app.get('/api/reports', (_req, res) => {
   const all = queryReports();
-  const categoriesStr = req.query.categories as string;
-  const severitiesStr = req.query.severities as string;
-  const verifiedOnly = req.query.verifiedOnly === 'true';
-  const region = (req.query.region as string) || 'all';
-  const searchQuery = (req.query.search as string) || '';
-  const sourceType = (req.query.sourceType as any) || 'all';
+  const liveReports = all.filter(isLiveReport);
 
-  const categories = categoriesStr ? (categoriesStr.split(',') as any) : [];
-  const severities = severitiesStr ? (severitiesStr.split(',') as any) : [];
+  if (liveReports.length > 0) {
+    res.json({
+      reports: liveReports,
+      mode: 'live',
+      liveCount: liveReports.length,
+      generatedAt: new Date().toISOString(),
+    });
+    return;
+  }
 
-  const filtered = filterReports(all, {
-    categories,
-    severities,
-    verifiedOnly,
-    region,
-    searchQuery,
-    sourceType,
+  res.json({
+    reports: getFreshMockReports(),
+    mode: 'demo',
+    liveCount: 0,
+    generatedAt: new Date().toISOString(),
   });
-
-  res.json(filtered);
 });
 
 /**
@@ -144,6 +126,24 @@ app.post('/api/clusters/:clusterId/brief', async (req, res) => {
   try {
     const briefResult = await generateAISituationBrief(clusters[0]);
     res.json(briefResult);
+  } catch (err) {
+    res.status(500).json({ error: 'AI Brief generation failed' });
+  }
+});
+
+/**
+ * POST /api/situation-brief (stateless variant — takes a client-computed cluster payload,
+ * mirrors api/situation-brief.ts on Vercel so both environments share one contract)
+ */
+app.post('/api/situation-brief', async (req, res) => {
+  const cluster = req.body?.cluster;
+  if (!cluster || !cluster.clusterId || !Array.isArray(cluster.reports)) {
+    return res.status(400).json({ error: 'Request body must include a valid { cluster } payload' });
+  }
+
+  try {
+    const brief = await generateAISituationBrief(cluster);
+    res.json(brief);
   } catch (err) {
     res.status(500).json({ error: 'AI Brief generation failed' });
   }

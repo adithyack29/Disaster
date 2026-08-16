@@ -1,5 +1,6 @@
 import type { DisasterReport, IncidentCluster, SeverityLevel, ClusterHistoryEntry } from '../types/incident';
 import { cleanText } from './utils';
+import { FORBIDDEN_TERMS, containsKeyword } from '../../server/classifier';
 
 const SEVERITY_RANK: Record<SeverityLevel, number> = {
   critical: 4,
@@ -25,21 +26,7 @@ function extractKeyWords(text: string): Set<string> {
  */
 function isDisasterTopic(headline: string, description: string): boolean {
   const fullText = `${headline} ${description}`.toLowerCase();
-
-  const forbiddenTerms = [
-    'teacher', 'assignment', 'school enrolment', 'udise+', 'student enrollment',
-    'protest', 'lathi-charge', 'lathi', 'protesters', 'assembly march', 'demonstration',
-    'cricket', 'ipl', 'bollywood', 'movie', 'actor', 'actress', 'box office',
-    'election', 'political party', 'speech', 'modi vs', 'rahul gandhi', 'bjp', 'congress',
-    'hindutva', 'ideologue', 'mcbroom', 'spider-man', 'controversy', 'land dispute', 'firing along',
-    'stock market', 'sensex', 'nifty', 'share price', 'crypto', 'iphone', 'gadget', 'smartphone',
-    'gaza', 'israel', 'netanyahu', 'hamas', 'russia', 'ukraine', 'kharkiv', 'odesa',
-    'moldova', 'florida', 'california', 'hawaii', 'naalehu', 'alaska', 'beijing', 'taiwan', 'trump', 'biden',
-    'nws', 'flashfloodwarning', '#inwx', '#ffw', 'lake, in', 'porter, in', 'indiana',
-    'denmark', 'skjern', 'hoboken', 'resiliencity', 'national coastline zone', 'central command zone'
-  ];
-
-  return !forbiddenTerms.some((term) => fullText.includes(term));
+  return !FORBIDDEN_TERMS.some((term) => containsKeyword(fullText, term));
 }
 
 /**

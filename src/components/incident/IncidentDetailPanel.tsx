@@ -4,14 +4,16 @@ import { getSeverityConfig, getCategoryLabel } from '../../lib/severity';
 import { formatTimeAgo, cleanHeadline, cleanText, formatExactTime } from '../../lib/utils';
 import { MiniIncidentMap } from './MiniIncidentMap';
 import { generateAISummary } from '../../lib/gemini';
-import { 
-  X, 
-  MapPin, 
-  Layers, 
-  ShieldCheck, 
-  Newspaper, 
-  Share2, 
-  Cpu, 
+import { API_BASE_URL } from '../../data/mockApi';
+import { getSuggestedProtocol } from '../../lib/actionProtocol';
+import {
+  X,
+  MapPin,
+  Layers,
+  ShieldCheck,
+  Newspaper,
+  Share2,
+  Cpu,
   UserCheck,
   Users,
   Award,
@@ -21,7 +23,9 @@ import {
   History,
   Zap,
   Clock,
-  AlertCircle
+  AlertCircle,
+  ClipboardList,
+  Download
 } from 'lucide-react';
 
 interface IncidentDetailPanelProps {
@@ -40,6 +44,22 @@ interface BriefMeta {
 export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluster, onClose }) => {
   const [briefMeta, setBriefMeta] = useState<BriefMeta | null>(null);
   const [loadingAi, setLoadingAi] = useState<boolean>(false);
+  const [downloadingPdf, setDownloadingPdf] = useState<boolean>(false);
+
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      // Dynamically imported: jsPDF is a heavy dependency that only matters to the small
+      // fraction of sessions that actually export a report — keeping it out of the initial
+      // bundle matters more for first-load performance than for this rare click's latency.
+      const { generateIncidentPDF } = await import('../../lib/pdfExport');
+      generateIncidentPDF(cluster);
+    } catch (err) {
+      console.error('[IncidentDetailPanel] PDF export failed:', err);
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
 
   // Live relative time ticking timer: Re-calculates formatTimeAgo every 30 seconds
   const [, setTick] = useState(0);
@@ -58,9 +78,12 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
     setLoadingAi(true);
 
     try {
-      // 1. Try Backend Server API Endpoint first
-      const res = await fetch(`http://127.0.0.1:3001/api/clusters/${cluster.clusterId}/brief`, {
+      // 1. Try Backend Server API Endpoint first (Express locally, Vercel function in prod —
+      // see api/situation-brief.ts and mockApi.ts's API_BASE_URL)
+      const res = await fetch(`${API_BASE_URL}/situation-brief`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cluster }),
       });
 
       if (res.ok) {
@@ -129,13 +152,25 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
             INCIDENT DOSSIER #{cluster.clusterId.replace(/[^a-zA-Z0-9]/g, '-').toUpperCase().slice(0, 16)}
           </span>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 rounded-md text-[#6B7280] hover:text-[#14181F] hover:bg-gray-200 transition-colors cursor-pointer"
-          title="Close panel"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={handleDownloadPdf}
+            disabled={downloadingPdf}
+            className="p-1.5 rounded-md text-[#6B7280] hover:text-[#1E3A5F] hover:bg-gray-200 transition-colors cursor-pointer disabled:opacity-60"
+            title="Download incident PDF report"
+            aria-label="Download incident PDF report"
+          >
+            {downloadingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+          </button>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-md text-[#6B7280] hover:text-[#14181F] hover:bg-gray-200 transition-colors cursor-pointer"
+            title="Close panel"
+            aria-label="Close incident detail panel"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* Main Scrollable Body */}
@@ -189,6 +224,32 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
           </div>
         </div>
 
+        {/* 2.5 Response Guidance: rule-based protocol + any source-stated dispatch action */}
+        <div className="bg-[#F7F8FA] border border-[#E4E7EC] rounded-xl p-3.5 space-y-2.5 text-xs">
+          <div className="flex items-center gap-1.5 font-bold text-[#1E3A5F] uppercase tracking-wider text-[11px]">
+            <ClipboardList className="w-3.5 h-3.5 text-[#1E3A5F]" />
+            <span>Suggested Response Protocol</span>
+          </div>
+          <p className="text-[#14181F] leading-relaxed">
+            {getSuggestedProtocol(cluster.category, cluster.highestSeverity)}
+          </p>
+          <p className="text-[10px] text-[#6B7280] font-mono-data">
+            Rule-based (category × severity) — not source-attributed dispatch instructions.
+          </p>
+
+          {representativeReport?.actionRequired && (
+            <div className="pt-2 border-t border-[#E4E7EC] space-y-1">
+              <span className="text-[10px] font-bold text-[#DC2626] uppercase tracking-wider">
+                Reported Action Required
+              </span>
+              <p className="text-[#14181F] leading-relaxed">{representativeReport.actionRequired}</p>
+              <p className="text-[10px] text-[#6B7280] font-mono-data">
+                As stated by {representativeReport.source.name}
+              </p>
+            </div>
+          )}
+        </div>
+
         {/* 3. On-Demand AI Situation Brief Section */}
         <div className="pt-2 border-t border-[#E4E7EC]">
           {!briefMeta ? (
@@ -215,7 +276,7 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
                 </div>
                 <span className="inline-flex items-center gap-1 text-[10px] font-mono-data font-semibold text-slate-300 bg-slate-900 px-2 py-0.5 rounded border border-slate-700">
                   <Bot className="w-3 h-3 text-amber-400" />
-                  <span>{briefMeta.source === 'gemini' ? 'Google Gemini 1.5' : 'AI Intel Engine'}</span>
+                  <span>{briefMeta.source === 'gemini' ? 'Google Gemini' : 'AI Intel Engine'}</span>
                 </span>
               </div>
 

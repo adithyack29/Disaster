@@ -1,71 +1,151 @@
-import type { 
-  DisasterReport, 
-  FilterState, 
-  IncidentCluster, 
-  DashboardStats, 
-  PulseBucket, 
-  SeverityLevel 
+import type {
+  DisasterReport,
+  FilterState,
+  IncidentCluster,
+  DashboardStats,
+  PulseBucket,
+  SeverityLevel
 } from '../types/incident';
 import { getFreshMockReports } from './mockReports';
 import { performSmartClustering } from '../lib/clustering';
-import { isStrictIndiaDisaster } from '../../server/classifier';
 import { fetchLiveClientTelemetry } from './liveClientFetcher';
+import { isDemoModeForced } from './demoMode';
 
-// Always try the local backend first; Vercel deploys only have window.location available
+// Local dev runs the Express backend (npm run server) on :3001; Vercel deploys the same
+// /api/reports + /api/situation-brief contract as serverless functions under /api. See
+// CLAUDE.md "Architecture" for why these are two separate implementations of one contract.
 const isVercel = typeof window !== 'undefined' && !window.location.hostname.includes('localhost') && !window.location.hostname.includes('127.0.0.1');
-const API_BASE_URL = isVercel ? '' : 'http://127.0.0.1:3001/api';
+export const API_BASE_URL = isVercel ? '/api' : 'http://127.0.0.1:3001/api';
+
+const BACKEND_FETCH_TIMEOUT_MS = 10000; // generous enough to cover a cold serverless start
+const REFRESH_INTERVAL_MS = 90000;
+
+export type IngestionMode = 'live' | 'demo';
+
+export interface ReportsFetchResult {
+  reports: DisasterReport[];
+  mode: IngestionMode;
+  liveCount: number;
+}
 
 let sessionPushedReports: DisasterReport[] = [];
-let liveClientFetchedReports: DisasterReport[] = [];
-let lastClientFetchTimeMs = 0;
+let cachedResult: ReportsFetchResult | null = null;
+let lastFetchTimeMs = 0;
 
-
-/**
- * Returns fresh mock reports merged with live client fetched telemetry and session dispatches
- */
-async function getFreshLocalReports(): Promise<DisasterReport[]> {
-  const now = Date.now();
-
-  // Fetch live open-source telemetry in browser every 90 seconds
-  if (now - lastClientFetchTimeMs > 90000 || liveClientFetchedReports.length === 0) {
-    try {
-      const fresh = await fetchLiveClientTelemetry();
-      if (fresh.length > 0) {
-        liveClientFetchedReports = fresh;
-        lastClientFetchTimeMs = now;
-      }
-    } catch (err) {
-      console.warn('[mockApi] Live client telemetry fetch fallback warning:', err);
-    }
-  }
-
-  const base = getFreshMockReports().filter((r) => isStrictIndiaDisaster(r.headline, r.description));
-  const combined = [...sessionPushedReports, ...liveClientFetchedReports, ...base];
-
-  // De-duplicate by headline
+function dedupeByHeadline(reports: DisasterReport[]): DisasterReport[] {
   const seenHeadlines = new Set<string>();
   const uniqueReports: DisasterReport[] = [];
-
-  for (const rep of combined) {
+  for (const rep of reports) {
     const key = rep.headline.toLowerCase().trim();
     if (!seenHeadlines.has(key)) {
       seenHeadlines.add(key);
       uniqueReports.push(rep);
     }
   }
-
-  // Sort by most recent timestamp
-  uniqueReports.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   return uniqueReports;
+}
+
+function demoSnapshot(): ReportsFetchResult {
+  return { reports: getFreshMockReports(), mode: 'demo', liveCount: 0 };
+}
+
+/**
+ * Validates the /api/reports response shape defensively — a malformed or stale-contract
+ * response (e.g. a bare array from an old deploy) must never crash the dashboard, it should
+ * just be treated as "backend didn't give us usable data" and fall through to the next layer.
+ */
+function parseBackendPayload(data: unknown): ReportsFetchResult | null {
+  if (!data || typeof data !== 'object') return null;
+  const obj = data as Record<string, unknown>;
+  if (!Array.isArray(obj.reports) || (obj.mode !== 'live' && obj.mode !== 'demo')) return null;
+  return {
+    reports: obj.reports as DisasterReport[],
+    mode: obj.mode,
+    liveCount: typeof obj.liveCount === 'number' ? obj.liveCount : 0,
+  };
+}
+
+/**
+ * Fetch the live, classified report set from the backend (Express locally, Vercel serverless
+ * function in production — same /api/reports contract in both environments). Returns null on
+ * any failure (network, timeout, malformed response) so the caller can fall through.
+ */
+async function fetchBackendReports(forceRefresh = false): Promise<ReportsFetchResult | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), BACKEND_FETCH_TIMEOUT_MS);
+    const params = new URLSearchParams({ _t: String(Date.now()) });
+    if (forceRefresh) params.set('refresh', 'true');
+
+    const res = await fetch(`${API_BASE_URL}/reports?${params.toString()}`, {
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) return null;
+    return parseBackendPayload(await res.json());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Demo-safety fallback chain (required for live judging demos — see CLAUDE.md):
+ *  1. If the presenter has armed "Force Demo Mode", skip the network entirely and serve the
+ *     curated snapshot — deterministic, works with zero connectivity.
+ *  2. Otherwise try the real backend (dev Express / Vercel function, same contract). The
+ *     backend itself already falls back to the demo snapshot server-side if live ingestion
+ *     fails or returns nothing — so a normal successful response here is trustworthy as-is.
+ *  3. If the backend is completely unreachable (network down, function cold-start failure),
+ *     try one more direct client-side live fetch (CORS-safe sources only, no keys needed).
+ *  4. If that also comes back empty, serve the local demo snapshot. The dashboard is never
+ *     blank and never silently blends fake data into a healthy live feed — every report shown
+ *     is honestly attributable to 'live' or 'demo' via the returned mode.
+ */
+async function getFreshLocalReports(): Promise<ReportsFetchResult> {
+  if (isDemoModeForced()) {
+    return {
+      reports: dedupeByHeadline([...sessionPushedReports, ...getFreshMockReports()]),
+      mode: 'demo',
+      liveCount: 0,
+    };
+  }
+
+  const now = Date.now();
+
+  if (now - lastFetchTimeMs > REFRESH_INTERVAL_MS || !cachedResult) {
+    const backend = await fetchBackendReports();
+
+    if (backend) {
+      cachedResult = backend;
+    } else {
+      try {
+        const live = await fetchLiveClientTelemetry();
+        cachedResult = live.length > 0
+          ? { reports: live, mode: 'live', liveCount: live.length }
+          : demoSnapshot();
+      } catch (err) {
+        console.warn('[mockApi] Live client telemetry fallback warning:', err);
+        cachedResult = demoSnapshot();
+      }
+    }
+    lastFetchTimeMs = now;
+  }
+
+  const merged = dedupeByHeadline([...sessionPushedReports, ...cachedResult.reports]);
+  merged.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  return { reports: merged, mode: cachedResult.mode, liveCount: cachedResult.liveCount };
 }
 
 export function pushLiveReport(report: DisasterReport): void {
   sessionPushedReports = [report, ...sessionPushedReports];
 }
 
-// Force-invalidate the client-side telemetry cache so next call re-fetches
+// Force-invalidate the report cache so the next call re-fetches from the backend
 export function invalidateClientCache(): void {
-  lastClientFetchTimeMs = 0;
+  lastFetchTimeMs = 0;
 }
 
 export function applyFilters(reports: DisasterReport[], filters?: FilterState): DisasterReport[] {
@@ -115,60 +195,18 @@ export function applyFilters(reports: DisasterReport[], filters?: FilterState): 
 }
 
 /**
- * Fetch reports from Node.js backend (/api/reports) with dynamic live fallback
+ * Fetch reports, filtered, along with honest live/demo attribution for the status indicator.
+ */
+export async function getReportsWithStatus(filters?: FilterState): Promise<ReportsFetchResult> {
+  const { reports, mode, liveCount } = await getFreshLocalReports();
+  return { reports: applyFilters(reports, filters), mode, liveCount };
+}
+
+/**
+ * Fetch reports (backend-first, live-telemetry/demo-snapshot fallback — see getFreshLocalReports)
  */
 export async function getReports(filters?: FilterState): Promise<DisasterReport[]> {
-  // On localhost: try backend Express server
-  if (!isVercel && API_BASE_URL) {
-    try {
-      const params = new URLSearchParams();
-      if (filters?.categories && filters.categories.length > 0) {
-        params.append('categories', filters.categories.join(','));
-      }
-      if (filters?.severities && filters.severities.length > 0) {
-        params.append('severities', filters.severities.join(','));
-      }
-      if (filters?.verifiedOnly) {
-        params.append('verifiedOnly', 'true');
-      }
-      if (filters?.sourceType && filters.sourceType !== 'all') {
-        params.append('sourceType', filters.sourceType);
-      }
-      if (filters?.region && filters.region !== 'all') {
-        params.append('region', filters.region);
-      }
-      if (filters?.searchQuery) {
-        params.append('search', filters.searchQuery);
-      }
-
-      // Cache-bust with timestamp to prevent browser fetch caching stale data
-      params.append('_t', String(Date.now()));
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(`${API_BASE_URL}/reports?${params.toString()}`, {
-        signal: controller.signal,
-        cache: 'no-store',
-      });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const backendReports = await res.json();
-        if (Array.isArray(backendReports) && backendReports.length > 0) {
-          // Sort by latest timestamp
-          backendReports.sort((a: DisasterReport, b: DisasterReport) =>
-            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-          );
-          return backendReports;
-        }
-      }
-    } catch (err) {
-      // Fall through to live client telemetry fallback
-    }
-  }
-
-  // On Vercel (or when backend unreachable): use live browser telemetry
-  const reports = await getFreshLocalReports();
+  const { reports } = await getFreshLocalReports();
   return applyFilters(reports, filters);
 }
 
@@ -176,87 +214,59 @@ export async function getReports(filters?: FilterState): Promise<DisasterReport[
  * Trigger a full pipeline re-ingestion + cache invalidation
  */
 export async function triggerPipelineAndRefresh(): Promise<void> {
-  // On localhost: hit backend pipeline endpoint
-  if (!isVercel && API_BASE_URL) {
-    try {
-      await fetch(`${API_BASE_URL.replace('/api', '')}/api/pipeline/run`, {
-        method: 'POST',
-        cache: 'no-store',
-      });
-    } catch (_) {}
-  }
-  // On Vercel: force-invalidate client telemetry cache so next getReports() re-fetches
   invalidateClientCache();
+  if (isDemoModeForced()) return;
+
+  try {
+    if (!isVercel) {
+      await fetch(`${API_BASE_URL}/pipeline/run`, { method: 'POST', cache: 'no-store' });
+    } else {
+      // No long-running pipeline in production — force the serverless cache to recompute now.
+      await fetchBackendReports(true);
+    }
+  } catch (_) {
+    // Fall through — the next getReports() call will retry the backend and, failing that,
+    // fall back to client telemetry / the demo snapshot.
+  }
 }
 
 /**
  * Fetch single report by ID
  */
 export async function getIncidentById(id: string): Promise<DisasterReport | null> {
-  if (!isVercel && API_BASE_URL) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(`${API_BASE_URL}/reports/${id}`, { signal: controller.signal, cache: 'no-store' });
-      clearTimeout(timeoutId);
-      if (res.ok) return await res.json();
-    } catch (_) {}
-  }
-
-  const reports = await getFreshLocalReports();
-  const found = reports.find((r) => r.id === id);
-  return found || null;
+  const { reports } = await getFreshLocalReports();
+  return reports.find((r) => r.id === id) || null;
 }
 
 /**
  * Fetch incident cluster by clusterId
  */
 export async function getClusterById(clusterId: string): Promise<IncidentCluster | null> {
-  if (!isVercel && API_BASE_URL) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(`${API_BASE_URL}/clusters/${clusterId}`, { signal: controller.signal, cache: 'no-store' });
-      clearTimeout(timeoutId);
-      if (res.ok) return await res.json();
-    } catch (_) {}
-  }
-
-  const freshReports = await getFreshLocalReports();
-  const reports = freshReports.filter((r) => r.clusterId === clusterId);
-  if (reports.length === 0) return null;
-  const clusters = performSmartClustering(reports);
+  const { reports } = await getFreshLocalReports();
+  const clusterReports = reports.filter((r) => r.clusterId === clusterId);
+  if (clusterReports.length === 0) return null;
+  const clusters = performSmartClustering(clusterReports);
   return clusters.length > 0 ? clusters[0] : null;
 }
 
 /**
- * Fetch dashboard stats
+ * Pure stats computation from an already-fetched report list — used both by getStats() below
+ * and directly by DashboardPage (which already holds the current report set in memory and
+ * shouldn't trigger a second fetch just to compute a summary of data it already has).
  */
-export async function getStats(filters?: FilterState): Promise<DashboardStats> {
-  if (!isVercel && API_BASE_URL) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(`${API_BASE_URL}/stats`, { signal: controller.signal, cache: 'no-store' });
-      clearTimeout(timeoutId);
-      if (res.ok) return await res.json();
-    } catch (_) {}
-  }
-
-  const reports = await getFreshLocalReports();
-  const filtered = applyFilters(reports, filters);
+export function computeStats(reports: DisasterReport[]): DashboardStats {
   const nowMs = Date.now();
   const oneHourAgo = nowMs - 3600 * 1000;
 
-  const criticalCount = filtered.filter((r) => r.severity === 'critical').length;
-  const highCount = filtered.filter((r) => r.severity === 'high').length;
-  const reportsLastHour = filtered.filter((r) => new Date(r.timestamp).getTime() >= oneHourAgo).length;
-  const verifiedCount = filtered.filter((r) => r.source.verified).length;
-  const verifiedPercentage = filtered.length > 0 ? Math.round((verifiedCount / filtered.length) * 100) : 0;
-  const sourceNames = new Set(filtered.map((r) => r.source.name));
+  const criticalCount = reports.filter((r) => r.severity === 'critical').length;
+  const highCount = reports.filter((r) => r.severity === 'high').length;
+  const reportsLastHour = reports.filter((r) => new Date(r.timestamp).getTime() >= oneHourAgo).length;
+  const verifiedCount = reports.filter((r) => r.source.verified).length;
+  const verifiedPercentage = reports.length > 0 ? Math.round((verifiedCount / reports.length) * 100) : 0;
+  const sourceNames = new Set(reports.map((r) => r.source.name));
 
   return {
-    activeIncidents: filtered.length,
+    activeIncidents: reports.length,
     criticalCount,
     highCount,
     reportsLastHour,
@@ -265,8 +275,16 @@ export async function getStats(filters?: FilterState): Promise<DashboardStats> {
   };
 }
 
+/**
+ * Fetch dashboard stats
+ */
+export async function getStats(filters?: FilterState): Promise<DashboardStats> {
+  const { reports } = await getFreshLocalReports();
+  return computeStats(applyFilters(reports, filters));
+}
+
 export async function getPulseTimeline(filters?: FilterState): Promise<PulseBucket[]> {
-  const reports = await getFreshLocalReports();
+  const { reports } = await getFreshLocalReports();
   const filtered = applyFilters(reports, filters);
   const nowMs = Date.now();
   const buckets: PulseBucket[] = [];
