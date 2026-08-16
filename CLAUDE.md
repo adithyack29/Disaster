@@ -101,11 +101,15 @@ app never silently blends fake data into a healthy live feed, and never blanks o
 - `api/reports.ts`: runs `aggregateAndClassify()` with a module-scope in-memory cache (2 min TTL,
   `?refresh=true` to force) — this part is still per-warm-instance only, a cold instance just
   re-runs it. Separately, the set of *accumulated live reports* (see gotcha #7) is persisted in
-  Upstash Redis (`UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`, provisioned via the Vercel
-  Marketplace — see Investigation Log 2026-08-16, fifth entry) so it survives cold starts and is
-  shared across concurrent instances, unlike the 2-min cache itself. Falls back to an in-memory
-  Map if those env vars aren't set, so the app still works (with the old per-instance-only
-  caveat) before/without provisioning Redis. In-flight requests are coalesced into a single
+  Redis via `@upstash/redis`'s REST client, provisioned via the Vercel Marketplace — see
+  Investigation Log 2026-08-16, fifth/sixth entries — so it survives cold starts and is shared
+  across concurrent instances, unlike the 2-min cache itself. Checks both
+  `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` (Upstash's own naming) and
+  `KV_REST_API_URL`/`KV_REST_API_TOKEN` (the legacy "Vercel KV" naming the Marketplace
+  integration actually injects when provisioned through the KV product wrapper — this project's
+  case, confirmed via its Environment Variables screen). Falls back to an in-memory Map if
+  neither pair is set, so the app still works (with the old per-instance-only caveat)
+  before/without provisioning Redis. In-flight requests are coalesced into a single
   shared promise.
 - `api/situation-brief.ts`: stateless — client POSTs the `IncidentCluster` it already computed;
   the function just runs `generateAISituationBrief(cluster)`.
@@ -437,10 +441,34 @@ integration), falling back to the old in-memory Map if those env vars are absent
 still works before/without provisioning it. Verified: throwaway-tsconfig Vercel-mode
 `tsc --noEmit` still passes (bare package import, no extension needed), `npm run build` still
 succeeds and bundle size is unaffected (the package is never imported into any `src/` file, so
-it doesn't reach the client bundle). Not yet verified against the live Vercel deployment — next
-session should confirm accumulated report count grows and survives across page loads spaced
-minutes apart (evidence of surviving a cold start), and stays correct if a judge and the
-presenter load the site from different Vercel instances simultaneously.
+it doesn't reach the client bundle). Not yet verified against the live Vercel deployment.
+
+### 2026-08-16 (sixth entry) — Redis wasn't actually being used: wrong env var names
+Fifth entry's Redis fix deployed but had no effect — `curl`ing `/api/reports?refresh=true`
+directly still showed the accumulated set apparently *losing* reports between calls instead of
+growing (a report present in one response was gone in the next, with a new one in its place).
+Since this can't be diagnosed from outside without dashboard/log access, added a temporary
+diagnostic field to the response, `accumulatorBackend: 'redis' | 'memory'` (see gotcha — it
+reflects whether `redis` resolved non-null in `api/reports.ts`). It read `"memory"` even after
+the user confirmed they'd connected Upstash. User then screenshotted the project's Environment
+Variables screen: the integration had provisioned `KV_REST_API_URL`, `KV_URL`, `REDIS_URL`,
+`KV_REST_API_READ_ONLY_TOKEN`, `KV_REST_API_TOKEN` — the legacy **Vercel KV** naming convention,
+not `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` that `Redis.fromEnv()` looks for. This
+happens when the Marketplace integration is provisioned through the "Vercel KV" product wrapper
+rather than connecting an Upstash account directly — same underlying Upstash-backed Redis,
+different env var names. Fixed by reading both naming conventions explicitly and constructing
+the client manually (`new Redis({ url, token })` instead of `Redis.fromEnv()`) so it works
+regardless of which path was used to provision it — see `api/reports.ts`'s `redisRestUrl`/
+`redisRestToken` resolution. **If you ever re-provision storage for this project, check the
+actual env var names in the dashboard rather than assuming `Redis.fromEnv()`'s defaults will
+match** — this is the second time in this session an assumption about Vercel's environment
+turned out to need on-the-ground verification (see gotcha #8 for the first). Also noted:
+`VITE_GEMINI_API_KEY` has been set in Vercel since 2026-08-10 (visible in the same screenshot),
+and `server/services/aiClassifier.ts` already checks `process.env.VITE_GEMINI_API_KEY` as a
+fallback — so Gemini classification *should* work, but every response checked so far still
+showed `classificationMethod: 'keyword-fallback'`. Not yet root-caused — next session should
+check Vercel Function Logs for `[AI Classifier]` warnings (circuit breaker trips, Gemini API
+errors) once the Redis fix is confirmed live, rather than assume the key itself is the problem.
 
 **Known risk for a live demo, not fully closed**: `classifyCategory`'s bare-substring keyword
 matching still occasionally miscategorizes borderline real news (crime/political stories that

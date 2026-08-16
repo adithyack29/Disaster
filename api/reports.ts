@@ -39,13 +39,21 @@ let inFlight: Promise<ReportsPayload> | null = null;
 // overwrite itself with the static demo snapshot on every such pass — real reports never had a
 // chance to build up the way they do locally.
 //
-// Persisted in Upstash Redis when `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` are set
-// (provision via the Vercel Marketplace — see CLAUDE.md) so accumulation survives cold starts
-// and is shared across concurrent warm instances, unlike plain module-scope state. Falls back
-// to an in-memory Map if Redis isn't configured, so the app still works (with the same
-// per-warm-instance caveat as before) before/without provisioning it.
-const redis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
-  ? Redis.fromEnv()
+// Persisted in Redis when its REST URL/token are set (provision via the Vercel Marketplace —
+// see CLAUDE.md) so accumulation survives cold starts and is shared across concurrent warm
+// instances, unlike plain module-scope state. Falls back to an in-memory Map if Redis isn't
+// configured, so the app still works (with the same per-warm-instance caveat as before)
+// before/without provisioning it.
+//
+// Checks both naming conventions: `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` (Upstash's
+// own naming, used by `Redis.fromEnv()`) and `KV_REST_API_URL`/`KV_REST_API_TOKEN` (the legacy
+// "Vercel KV" naming the Marketplace integration actually injects when provisioned through the
+// KV product wrapper rather than Upstash's own console — confirmed via this project's
+// Environment Variables screen, see CLAUDE.md Investigation Log 2026-08-16, sixth entry).
+const redisRestUrl = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+const redisRestToken = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+const redis = redisRestUrl && redisRestToken
+  ? new Redis({ url: redisRestUrl, token: redisRestToken })
   : null;
 let memoryAccumulatedLive: Map<string, DisasterReport> = new Map();
 
