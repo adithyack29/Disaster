@@ -11,8 +11,16 @@ export async function fetchNewsAPIReports(): Promise<DisasterReport[]> {
     return [];
   }
 
-  const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue OR inundation) India');
-  const url = `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=30&apiKey=${apiKey}`;
+  // Broadened beyond the original flood/landslide/cyclone/rain/earthquake/collapse/fire/rescue/
+  // inundation set — the classifier already recognizes heatwave, stampede, cloudburst, lightning,
+  // gas leak, boat capsize, and avalanche reports (see server/classifier.ts's CATEGORY_KEYWORDS),
+  // but the query never fetched articles about them in the first place.
+  const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue OR inundation OR heatwave OR stampede OR cloudburst OR lightning OR "gas leak" OR capsize OR avalanche) India');
+  // pageSize raised from 30 to 100 (NewsAPI's max for the /everything endpoint) — the adapter was
+  // hitting the 30-article cap almost every pass, meaning genuine India-disaster matches beyond
+  // the first 30 most-recent articles (across ALL query terms, not just disaster ones) were never
+  // even reaching the India/category filter downstream.
+  const url = `https://newsapi.org/v2/everything?q=${query}&sortBy=publishedAt&pageSize=100&apiKey=${apiKey}`;
   const response = await fetch(url);
   if (!response.ok) {
     // Throw (rather than silently return []) so aggregate.ts's per-source diagnostics can

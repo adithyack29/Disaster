@@ -35,40 +35,52 @@ export function containsKeyword(lowerText: string, keyword: string): boolean {
 }
 
 // Keywords dictionary for category classification (Expanded for live news dispatches)
+// containsKeyword matches whole words only (see its docstring), so a keyword list that only has
+// the singular form silently drops any headline using the plural — a very common headline
+// pattern ("Assam floods:", "Earthquakes rattle...", "Landslides block highway...") that was
+// classifying as `null` (no category) and getting the report dropped entirely rather than
+// merely misclassified, since aggregate.ts/rssAdapter.ts both require a non-null category to
+// keep a report. Found via a real "Assam floods: NDRF rescues..." headline that returned `null`
+// despite unambiguously being a flood report. Added the plural form of every keyword whose
+// singular/plural pair are both plausible in real headlines (not e.g. 'seismic', which has no
+// natural plural).
 const CATEGORY_KEYWORDS: Record<CategoryType, string[]> = {
   flood: [
-    'flood', 'flooding', 'flooded', 'floodwater', 'floodwaters', 'inundation', 'waterlogging',
-    'waterlogged', 'submerged', 'overflow', 'overflowing', 'brahmaputra', 'ganga', 'yamuna',
-    'surge', 'deluge', 'drowning', 'drowned', 'heavy rain', 'heavy rainfall', 'rivers rise',
-    'danger mark', 'downpour', 'monsoon rain', 'torrents', 'dam opened', 'sluice gates',
-    'inundated', 'water level', 'rain alert', 'rains', 'waterlogging in'
+    'flood', 'floods', 'flooding', 'flooded', 'floodwater', 'floodwaters', 'inundation',
+    'waterlogging', 'waterlogged', 'submerged', 'overflow', 'overflowing', 'brahmaputra',
+    'ganga', 'yamuna', 'surge', 'deluge', 'drowning', 'drowned', 'heavy rain', 'heavy rainfall',
+    'rivers rise', 'danger mark', 'downpour', 'monsoon rain', 'torrents', 'dam opened',
+    'sluice gates', 'inundated', 'water level', 'rain alert', 'rains', 'waterlogging in'
   ],
   fire: [
-    'fire', 'wildfire', 'bushfire', 'blaze', 'blazing', 'explosion', 'flames', 'chemical leak',
-    'inferno', 'combustion', 'smoke', 'gas leak', 'toxic fumes', 'firefighters', 'fire tender'
+    'fire', 'fires', 'wildfire', 'wildfires', 'bushfire', 'bushfires', 'blaze', 'blazes',
+    'blazing', 'explosion', 'explosions', 'flames', 'chemical leak', 'inferno', 'combustion',
+    'smoke', 'gas leak', 'toxic fumes', 'firefighters', 'fire tender'
   ],
   earthquake: [
-    'earthquake', 'tremor', 'quake', 'seismic', 'epicenter', 'aftershock', 'faultline', 
-    'magnitude', 'seismograph'
+    'earthquake', 'earthquakes', 'tremor', 'tremors', 'quake', 'quakes', 'seismic', 'epicenter',
+    'aftershock', 'aftershocks', 'faultline', 'magnitude', 'seismograph'
   ],
   cyclone: [
-    'cyclone', 'storm', 'typhoon', 'hurricane', 'landfall', 'squall', 'gale', 'bay of bengal', 
-    'depression', 'met forecasts', 'red alert', 'orange alert', 'imd warns', 'weather alert', 
-    'cyclonic storm'
+    'cyclone', 'cyclones', 'storm', 'storms', 'typhoon', 'typhoons', 'hurricane', 'hurricanes',
+    'landfall', 'squall', 'squalls', 'gale', 'gales', 'bay of bengal', 'depression',
+    'met forecasts', 'red alert', 'orange alert', 'imd warns', 'weather alert', 'cyclonic storm'
   ],
   building_collapse: [
-    'collapse', 'collapsed', 'collapsing', 'rubble', 'structural failure', 'cave-in', 
-    'building fell', 'masonry', 'wall collapsed', 'bridge collapse', 'house collapsed', 
-    'structure collapse'
+    'collapse', 'collapses', 'collapsed', 'collapsing', 'rubble', 'structural failure',
+    'cave-in', 'building fell', 'masonry', 'wall collapsed', 'bridge collapse',
+    'house collapsed', 'structure collapse'
   ],
   medical: [
-    'medical emergency', 'trauma', 'epidemic', 'heatwave', 'casualty', 'dengue', 'cholera', 
-    'ambulance', 'hospital', 'injured', 'drowned', 'drowning', 'fatalities', 'rescued', 
-    'heat stroke', 'outbreak', 'poisoning'
+    'medical emergency', 'trauma', 'epidemic', 'epidemics', 'heatwave', 'heatwaves', 'casualty',
+    'casualties', 'dengue', 'cholera', 'ambulance', 'hospital', 'hospitals', 'injured',
+    'drowned', 'drowning', 'fatalities', 'rescued', 'heat stroke', 'outbreak', 'outbreaks',
+    'poisoning'
   ],
   landslide: [
-    'landslide', 'mudslide', 'cloudburst', 'rockfall', 'debris flow', 'sludge', 'boulder fall',
-    'earthmover', 'blocked by landslide', 'road blocked'
+    'landslide', 'landslides', 'mudslide', 'mudslides', 'cloudburst', 'cloudbursts', 'rockfall',
+    'rockfalls', 'debris flow', 'sludge', 'boulder fall', 'earthmover', 'blocked by landslide',
+    'road blocked'
   ],
 };
 
@@ -245,6 +257,31 @@ export const FORBIDDEN_TERMS = [
   // Men...") trips the fire category's 'smoke' keyword. Guarded via the specific phrase rather
   // than touching 'smoke' itself, which is a legitimate signal in real fire/toxic-fume reports.
   'smoke weed',
+  // "Kerala's baby cradle scheme hits milestone: 1,000th infant rescued" — a child-welfare
+  // program human-interest story, not a disaster — trips the medical category's 'rescued'
+  // keyword. Guarded via the specific scheme name rather than touching 'rescued', which is a
+  // legitimate signal in real flood/collapse/landslide rescue-operation reports.
+  'cradle scheme',
+  // Road traffic accidents ("Speeding Scooter Kills 65-Year-Old Watchman") trip the medical
+  // category's 'killed'/'injured' keywords the same way violent-crime stories do (see the
+  // 'attacker'/'shot at' guards above) despite being routine traffic incidents, not a disaster
+  // dispatch. Guarded via the vehicle-speed marker rather than touching 'killed'/'injured'.
+  'speeding scooter', 'speeding car', 'speeding bike', 'speeding truck', 'speeding bus',
+  // Legal/compensation follow-up stories about old road accidents ("Rs 2.92 Crore Compensation
+  // For Man Disabled In 2020 Delhi Road Accident") aren't a live disaster dispatch, but their
+  // description text incidentally matches the medical category. Guarded via the compensation
+  // marker, which a genuine disaster report would not use.
+  'crore compensation',
+  // A horrific crime story ("Man Stops On Bridge For Selfie With Infant Daughter, Throws Her
+  // Into Yamuna") trips the flood category via the river name 'yamuna' — a real false positive
+  // found on the live feed. Guarded via the act itself rather than touching 'yamuna', which is a
+  // legitimate signal in real Yamuna flood-level reports.
+  'throws her into', 'threw her into', 'throws him into', 'threw him into',
+  // A meta/policy article about India's disaster-response track record ("India emerging as
+  // leading responder to natural disasters worldwide: Report") is disaster-adjacent commentary,
+  // not a live incident dispatch — its body text cites past disasters by name, which incidentally
+  // matches a category keyword. Guarded via the specific framing phrase.
+  'leading responder to natural disasters',
 ];
 
 /**

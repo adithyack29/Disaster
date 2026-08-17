@@ -11,7 +11,8 @@ export async function fetchGNewsReports(): Promise<DisasterReport[]> {
     return [];
   }
 
-  const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue) India');
+  // See newsApiAdapter.ts for why this list was broadened beyond the original 8 terms.
+  const query = encodeURIComponent('(flood OR landslide OR cyclone OR rain OR earthquake OR collapse OR fire OR rescue OR heatwave OR stampede OR cloudburst OR lightning OR "gas leak" OR capsize OR avalanche) India');
   const url = `https://gnews.io/api/v4/search?q=${query}&lang=en&country=in&max=20&apikey=${apiKey}`;
   const response = await fetch(url);
   if (!response.ok) {

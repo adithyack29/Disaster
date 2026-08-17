@@ -18,7 +18,9 @@ const parser = new Parser({
 // India below) before being added — see CLAUDE.md Investigation Log 2026-08-16, ninth entry.
 // Candidates that 403'd, 404'd, or redirected to a non-feed page (oneindia.com,
 // deccanherald.com, aninews.in, livehindustan.com, theprint.in, zeenews.india.com,
-// dnaindia.com) were deliberately left out rather than added speculatively.
+// dnaindia.com, telegraphindia.com, scroll.in, outlookindia.com, tribuneindia.com,
+// deccanchronicle.com, republicworld.com) were deliberately left out rather than added
+// speculatively.
 const RSS_FEEDS = [
   { url: 'https://www.thehindu.com/news/national/feeder/default.rss', name: 'The Hindu National' },
   { url: 'https://www.thehindu.com/news/states/feeder/default.rss', name: 'The Hindu States' },
@@ -31,6 +33,10 @@ const RSS_FEEDS = [
   { url: 'https://www.news18.com/commonfeeds/v1/eng/rss/india.xml', name: 'News18 India' },
   { url: 'https://www.indiatoday.in/rss/1206578', name: 'India Today India' },
   { url: 'https://www.freepressjournal.in/stories.rss', name: 'Free Press Journal' },
+  { url: 'https://www.business-standard.com/rss/latest.rss', name: 'Business Standard' },
+  { url: 'https://www.livemint.com/rss/news', name: 'LiveMint' },
+  { url: 'https://news.abplive.com/news/india/feed', name: 'ABP Live' },
+  { url: 'https://www.indiatvnews.com/rssnews/topstory.xml', name: 'India TV News' },
 ];
 
 export async function fetchRSSReports(): Promise<DisasterReport[]> {
