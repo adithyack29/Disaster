@@ -9,16 +9,25 @@ const SEVERITY_RANK: Record<SeverityLevel, number> = {
   low: 1,
 };
 
+const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from',
+  'as', 'is', 'was', 'were', 'are', 'been', 'be', 'has', 'have', 'had', 'it', 'its', 'this',
+  'that', 'about', 'over', 'under', 'after', 'near', 'across', 'news', 'feed', 'report',
+  'india', 'indian', 'state', 'district', 'area', 'zone', 'sector', 'national', 'local',
+  'killed', 'injured', 'dead', 'reported', 'says', 'said', 'according', 'when',
+  // Spelled-out casualty/detail numbers ("four-year-old", "five-storey") and generic
+  // building-height/story-count nouns. Any two unrelated disaster reports of the same TYPE
+  // routinely reuse this exact vocabulary purely because they're both "N killed, M-storey
+  // building" stories — it adds zero information about whether they're the SAME incident,
+  // and was inflating keyword-overlap enough to cluster an unrelated Kolkata hotel fire
+  // together with a same-week-different-city Tarapith hotel fire (see CLAUDE.md).
+  'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven',
+  'twelve', 'thirteen', 'dozen', 'several', 'many', 'few', 'storey', 'floor', 'floors',
+]);
+
 function extractKeyWords(text: string): Set<string> {
-  const stopWords = new Set([
-    'the', 'a', 'an', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from',
-    'as', 'is', 'was', 'were', 'are', 'been', 'be', 'has', 'have', 'had', 'it', 'its', 'this',
-    'that', 'about', 'over', 'under', 'after', 'near', 'across', 'news', 'feed', 'report',
-    'india', 'indian', 'state', 'district', 'area', 'zone', 'sector', 'national', 'local',
-    'killed', 'injured', 'dead', 'reported', 'says', 'said', 'according'
-  ]);
   const words = text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/);
-  return new Set(words.filter((w) => w.length > 2 && !stopWords.has(w)));
+  return new Set(words.filter((w) => w.length > 2 && !STOP_WORDS.has(w)));
 }
 
 /**
@@ -27,6 +36,18 @@ function extractKeyWords(text: string): Set<string> {
 function isDisasterTopic(headline: string, description: string): boolean {
   const fullText = `${headline} ${description}`.toLowerCase();
   return !FORBIDDEN_TERMS.some((term) => containsKeyword(fullText, term));
+}
+
+const GENERIC_PLACE_NAMES = new Set(['central command zone', 'northeast india', 'north east india']);
+
+// True when a location's placeName carries no more specific information than its own state name
+// — i.e. extractLocation()'s dictionary didn't recognize any city/town in the text, so it fell
+// back to the state (or the generic region catch-all / default). A generic placeName can't be
+// used to positively confirm OR rule out that two reports are about the same specific incident.
+function isGenericPlaceName(loc: { placeName?: string; state?: string }): boolean {
+  const place = (loc.placeName || '').toLowerCase();
+  const state = (loc.state || '').toLowerCase();
+  return place === state || GENERIC_PLACE_NAMES.has(place);
 }
 
 /**
@@ -172,11 +193,42 @@ export function performSmartClustering(
       const isSameState = cState === rState || cState.includes(rState) || rState.includes(cState);
       if (!isSameState) continue;
 
-      const clusterText = `${cluster.title} ${cluster.reports.map((r) => `${r.headline} ${r.description}`).join(' ')}`;
-      const cWords = extractKeyWords(clusterText);
-      const overlap = Array.from(rWords).filter((w) => cWords.has(w));
+      // Two reports that each name a SPECIFIC place (not just a state-level fallback) and
+      // disagree on it are never the same incident, no matter how much vocabulary they share —
+      // news descriptions of the same disaster TYPE (e.g. two unrelated hotel fires) routinely
+      // reuse near-identical phrasing ("massive fire", "several injured", "four-storey
+      // building"), which let a plain keyword-overlap threshold alone merge them. Only fall
+      // through to the keyword check when at least one side is generic (state-wide event, or our
+      // location dictionary simply didn't recognize a city in the text) — see CLAUDE.md.
+      const rPlace = (report.location.placeName || '').toLowerCase();
+      const cPlace = (cluster.centerLocation.placeName || '').toLowerCase();
+      const isExactPlaceMatch = rPlace === cPlace;
+      const isSpecificPlaceMismatch =
+        !isExactPlaceMatch && !isGenericPlaceName(report.location) && !isGenericPlaceName(cluster.centerLocation);
+      if (isSpecificPlaceMismatch) continue;
 
-      if (overlap.length >= 2) {
+      // Best-match-against-any-single-member, NOT overlap against the whole cluster's
+      // concatenated text. A concatenated bag-of-words grows without bound as a cluster picks up
+      // more reports, which steadily lowers the effective bar for the next candidate — two
+      // reports that would never individually pass the threshold could still combine to drag an
+      // unrelated later report in once the cluster's aggregate vocabulary got rich enough (this
+      // is exactly how an unrelated Tarapith hotel fire ended up merged into a Kolkata hotel fire
+      // cluster: their OWN pairwise overlap was only 2, but the Kolkata cluster's accumulated
+      // text from 4 prior reports pushed it well past threshold). Requiring a strong match
+      // against at least one existing member keeps the bar constant regardless of cluster size.
+      let bestOverlap = 0;
+      for (const existing of cluster.reports) {
+        const eWords = extractKeyWords(`${existing.headline} ${existing.description}`);
+        const ov = Array.from(rWords).filter((w) => eWords.has(w)).length;
+        if (ov > bestOverlap) bestOverlap = ov;
+      }
+
+      // Same specific place named on both sides is strong corroboration on its own; when at
+      // least one side is only a generic state-level fallback, require more textual evidence
+      // before treating them as the same incident.
+      const overlapThreshold = isExactPlaceMatch ? 2 : 4;
+
+      if (bestOverlap >= overlapThreshold) {
         matchedCluster = cluster;
         break;
       }

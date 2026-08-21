@@ -897,3 +897,91 @@ adapters (ReliefWeb v1 decommissioned, Bluesky bot-walled, Reddit anti-bot) wire
 `aggregate.ts` untouched — they're a known, documented, intentional state (see the 2026-08-16
 ninth entry), not dead code to prune, and removing them would be a functional/product decision
 outside the scope of "remove code nothing uses."
+
+### 2026-08-21 (second entry) — Added a Gemini "is this a genuine disaster" gate; fixed two real clustering bugs
+User reported the dashboard was showing clearly non-disaster content (an obituary, a political
+dharna, a crime story, a military exercise) and that unrelated reports were landing on the same
+incident card, and asked specifically for Gemini to be used to decide relevance rather than more
+keyword patching. Confirmed both against the live dev DB (128 accumulated reports) before
+touching anything.
+
+**Root cause 1 — the keyword gate never got a second opinion.** `aggregate.ts`'s pipeline runs
+`isStrictIndiaDisaster` (pure keyword) BEFORE `classifyReportsBatch` (Gemini) — Gemini only ever
+refines the *category* of something that already passed the keyword gate, it never gets to
+reject it outright. Fixed by adding `isGenuineDisaster: boolean` to `AIClassificationSchema`
+(`server/services/aiClassifier.ts`), a much stronger prompt instructing Gemini to reject
+political/crime/obituary/military-drill/administrative-notice/pure-forecast content even when it
+contains a disaster keyword like "hospital" or "fire", and having `applyAIResultToReport` return
+`null` (dropped by the caller) when Gemini says false. Defaults to `true` on any parse hiccup —
+never silently drop something on an ambiguous signal. **This only takes effect when Gemini is
+actually reachable** — mid-implementation, live testing hit the documented 20/day free-tier quota
+(confirmed via a direct `generateContent` call, not assumed: `429 ... GenerateRequestsPerDayPerProjectPerModel-FreeTier`,
+limit 20) — so as an immediate, quota-independent stopgap, also added 8 new `FORBIDDEN_TERMS`
+entries in `server/classifier.ts` for the exact false positives found (`'age-related health
+issues'`, `'pellet gun row'`, `'on way to kill'`, `'yudh abhyas'`, `'gets army award'`, `'chinese
+manjha'`, `'trafficking racket'`, `'will schools remain closed'`), each verified both directions
+per the established convention. These are explicitly a safety net for when Gemini is unavailable,
+not a replacement for the AI gate.
+
+**Root cause 2 — a wire-service dateline bug in `extractLocation()`.** A real Arunachal Pradesh
+flash-flood story (4 dead) was clustering under "Delhi" — traced to `extractLocation` checking
+`INDIAN_LOCATIONS` for the earliest text match, then falling back to the separate
+`PRADESH_FALLBACKS` list (which is where "Arunachal Pradesh" lived) ONLY if zero
+`INDIAN_LOCATIONS` matches existed anywhere in the text — so a "NEW DELHI:" wire dateline
+elsewhere in the body (standard PTI/TOI byline format, meaning where the story was *filed*, not
+where the disaster happened) always won, regardless of "Arunachal Pradesh" appearing at index 0
+of the headline. Fixed by racing `PRADESH_FALLBACKS` in the exact same positional comparison as
+`INDIAN_LOCATIONS` instead of as an all-or-nothing last resort. Verified directly:
+`extractLocation()` on the real headline+description now correctly returns Arunachal Pradesh, and
+after a pipeline run the live report's `location` updated accordingly (pipeline.ts already
+recomputes every report's location every cycle, so this fix retroactively corrected the
+already-accumulated bad data with no manual migration needed).
+
+**Root cause 3 — keyword-overlap clustering had no bound on cluster vocabulary growth, and no
+place-mismatch veto.** Traced two more real bad merges: a Kolkata hotel fire cluster had
+absorbed an unrelated Tarapith (Birbhum district) hotel fire from the same week, and an Income
+Tax office fire in Mumbai had absorbed an unrelated Kandivali hotel fire. Diagnosed with a
+throwaway instrumented copy of the clustering loop against the live dataset (not guessed) — this
+found the *specific* mechanism: `performSmartClustering`'s match required only "same state +
+same category + ≥2 shared significant words", checked against the CONCATENATED text of every
+report already in the cluster. That concatenated bag grows every time a report joins, which
+steadily lowers the effective bar for the next candidate — two individually-unrelated reports'
+own pairwise overlap was only 2 words, but the Kolkata cluster's accumulated vocabulary from 4
+prior reports pushed a 5th (unrelated) candidate to 6+. Separately, both fire reports' formulaic
+"N killed, M-storey building" phrasing coincidentally shared spelled-out numbers ("four-year-old"
+vs "four-storey", "five-storey" vs "five were from...") that added overlap with zero real topical
+signal. Three-part fix in `src/lib/clustering.ts`: (1) a hard veto — two reports that each name a
+*specific* (non-generic) place and disagree are never merged, full stop, regardless of word
+overlap, only falling through to the keyword check when at least one side is a generic
+state-level fallback; (2) compare a candidate against the single BEST-matching existing member of
+a cluster, not the whole cluster's concatenated bag, so the bar can't erode as a cluster grows;
+(3) added spelled-out numbers (`'four'`, `'five'`, etc.), `'when'`, and `'storey'`/`'floor'` to
+the keyword stopword list — generic story-detail vocabulary that recurs in any casualty-count
+disaster report regardless of which specific incident. Also extended
+`aiClassifier.ts`'s `applyAIResultToReport` to sharpen an overly-generic rule-based placeName
+(one that fell back to just the state name because the fixed `INDIAN_LOCATIONS` dictionary didn't
+recognize a specific city/town) using Gemini's own `extractedEntities.locationsMentioned` field —
+previously extracted by every Gemini call and silently discarded. This is what will let the
+place-mismatch veto correctly separate cases like Kolkata vs. Tarapith once Gemini is reachable
+again (both currently fall back to the identical generic "West Bengal" placeName under
+keyword-classification alone, since neither city is in the dictionary).
+
+Verified against the live dev SQLite DB (128 accumulated reports, not a synthetic test set): all
+8 new `FORBIDDEN_TERMS` false positives confirmed gone after a manual pipeline run, alongside a
+battery of real disaster headlines (including ones the project had previously and deliberately
+preserved, like "Flood victims protest against inadequate relief" and "Schools shut in 3 Odisha
+districts amid heavy rainfall") re-confirmed still passing. Re-ran `performSmartClustering`
+against the live re-processed data: the Arunachal Pradesh flood now has its own correct cluster
+(previously buried inside "Delhi weather forecast"), and the Kolkata/Tarapith fires now correctly
+split into two cards. **Known remaining limitation, left undone**: the Mumbai Income Tax office
+fire and the unrelated Kandivali hotel fire still cluster together — both resolve to the exact
+same specific placeName ("Mumbai"), so neither the place-mismatch veto nor the stopword fix
+apply; separating this specific case needs either finer-grained geocoding than
+`INDIAN_LOCATIONS` has, or Gemini's `locationsMentioned` to name "Kandivali" specifically (which
+requires Gemini to be reachable — currently isn't, see above). `npm run build`/`npm run lint`
+clean throughout; Vercel-mode `tsc --noEmit` on `api/reports.ts`/`api/situation-brief.ts` clean
+(per gotcha #8). Not yet verified against the Vercel production deployment or against a fresh
+Gemini quota window — next session should re-check `classificationMethod` distribution and the
+Kolkata/Tarapith split specifically once quota resets, to confirm the `isGenuineDisaster` gate and
+`locationsMentioned` sharpening work end-to-end against real Gemini output, not just the
+keyword-fallback stopgap.

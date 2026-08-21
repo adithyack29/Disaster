@@ -417,6 +417,40 @@ export const FORBIDDEN_TERMS = [
   // specific to this kind of plant-science feature rather than touching 'monsoon rain', which is
   // one of the most reliable signals in real flood dispatches.
   'chromosomes', 'spores',
+  // Batch found 2026-08-21 while adding the Gemini isGenuineDisaster gate (see
+  // server/services/aiClassifier.ts) — these are a stopgap rule-based safety net for when Gemini
+  // is unavailable/quota-exhausted (a real, recurring condition — see CLAUDE.md Investigation
+  // Log), not a replacement for it. Each verified both directions: blocks the false positive
+  // below, a battery of real disaster headlines already in the live feed still pass.
+  //
+  // Obituary/celebrity-death stories mention "hospital"/"medical care" like a real medical
+  // emergency does ("Veteran actor Sowcar Janaki died in Chennai... admitted to a private
+  // hospital... receiving intensive medical care").
+  'age-related health issues',
+  // Political-controversy story about a crowd-control-weapon (pellet gun) row — not a disaster
+  // dispatch, despite classifyCategory('medical') matching on 'injured'/'fire'.
+  'pellet gun row',
+  // Assassination-attempt-gone-wrong crime story ("2 shooters on way to kill Delhi doctor landed
+  // in a hospital") — trips 'medical' via 'hospital', not an emergency dispatch.
+  'on way to kill',
+  // "Yudh Abhyas" is a recurring named India-US joint military exercise — trips the 'fire'
+  // category via "precision fires" (the military term for live-fire training), not a wildfire or
+  // structural fire.
+  'yudh abhyas',
+  // Commendation/award-ceremony story about a past, already-resolved incident (a bomb-detection
+  // dog honored for a blast response months earlier) — not a live dispatch.
+  'gets army award',
+  // Banned-kite-string (a throat/skin-cutting hazard) injury + seizure story — a public-safety
+  // regulatory item, not a disaster.
+  'chinese manjha',
+  // Human-trafficking crime story — trips 'medical' via 'hospitals' (where the traffickers
+  // operated), not a medical emergency.
+  'trafficking racket',
+  // Recurring daily "will schools remain closed" content-mill template — published every day
+  // regardless of whether an actual disaster is occurring, distinct from a genuine disaster-
+  // driven closure headline like "Schools shut in 3 Odisha districts amid heavy rainfall" (which
+  // still correctly passes — this guard only matches the specific forecast-checker phrasing).
+  'will schools remain closed',
 ];
 
 /**
@@ -497,6 +531,16 @@ export function inferSeverity(text: string): SeverityLevel {
   return 'low';
 }
 
+// "Pradesh" states whose plain name isn't its own INDIAN_LOCATIONS entry (their districts/cities
+// are instead). Kept in the same positional race as INDIAN_LOCATIONS below — see extractLocation.
+const PRADESH_FALLBACKS: { keywords: string[]; loc: LocationInfo }[] = [
+  { keywords: ['madhya pradesh', 'm.p.'], loc: { lat: 22.9734, lng: 78.6569, placeName: 'Madhya Pradesh Sector', state: 'Madhya Pradesh' } },
+  { keywords: ['uttar pradesh', 'u.p.'], loc: { lat: 26.8467, lng: 80.9462, placeName: 'Uttar Pradesh Sector', state: 'Uttar Pradesh' } },
+  { keywords: ['himachal pradesh', 'h.p.'], loc: { lat: 31.1048, lng: 77.1734, placeName: 'Himachal Pradesh Sector', state: 'Himachal Pradesh' } },
+  { keywords: ['arunachal pradesh'], loc: { lat: 28.2180, lng: 94.7278, placeName: 'Arunachal Sector', state: 'Arunachal Pradesh' } },
+  { keywords: ['andhra pradesh'], loc: { lat: 15.9129, lng: 79.7400, placeName: 'Andhra Sector', state: 'Andhra Pradesh' } },
+];
+
 /**
  * Match text against known Indian locations.
  *
@@ -509,45 +553,47 @@ export function inferSeverity(text: string): SeverityLevel {
  * often name a secondary state (a victim's or worker's home state) alongside the actual incident
  * location, so array order was silently picking the wrong one whenever the secondary state
  * happened to sort earlier in this file.
+ *
+ * PRADESH_FALLBACKS is raced in the SAME positional comparison as INDIAN_LOCATIONS, not checked
+ * only as an all-or-nothing last resort after it. The last-resort version had a real bug: a wire
+ * story headlined "Arunachal Pradesh flash floods: Four killed..." with a "NEW DELHI:" byline in
+ * its body (standard PTI/TOI wire-service dateline format — where the story was FILED from, not
+ * where the disaster happened) always extracted 'Delhi', because 'Delhi' is an INDIAN_LOCATIONS
+ * entry and 'Arunachal Pradesh' was not — so the fallback list was never even consulted, no
+ * matter how much earlier 'Arunachal Pradesh' appeared in the actual text. Found while
+ * investigating a real disaster (Arunachal flash flood, 4 dead) that had been silently merged
+ * into an unrelated "Delhi weather forecast" incident cluster. See CLAUDE.md Investigation Log.
  */
 export function extractLocation(text: string): LocationInfo {
   const lower = text.toLowerCase();
 
-  let best: { loc: (typeof INDIAN_LOCATIONS)[number]; index: number } | null = null;
+  let best: { loc: LocationInfo; index: number } | null = null;
+
   for (const loc of INDIAN_LOCATIONS) {
     const match = buildKeywordRegex(loc.keyword).exec(lower);
     if (match && (best === null || match.index < best.index)) {
-      best = { loc, index: match.index };
+      best = {
+        loc: {
+          lat: loc.lat,
+          lng: loc.lng,
+          placeName: loc.keyword.charAt(0).toUpperCase() + loc.keyword.slice(1),
+          state: loc.state,
+        },
+        index: match.index,
+      };
     }
   }
-  if (best) {
-    const { loc } = best;
-    return {
-      lat: loc.lat,
-      lng: loc.lng,
-      placeName: loc.keyword.charAt(0).toUpperCase() + loc.keyword.slice(1),
-      state: loc.state,
-    };
-  }
 
-  const pradeshFallbacks: { keywords: string[]; loc: LocationInfo }[] = [
-    { keywords: ['madhya pradesh', 'm.p.'], loc: { lat: 22.9734, lng: 78.6569, placeName: 'Madhya Pradesh Sector', state: 'Madhya Pradesh' } },
-    { keywords: ['uttar pradesh', 'u.p.'], loc: { lat: 26.8467, lng: 80.9462, placeName: 'Uttar Pradesh Sector', state: 'Uttar Pradesh' } },
-    { keywords: ['himachal pradesh', 'h.p.'], loc: { lat: 31.1048, lng: 77.1734, placeName: 'Himachal Pradesh Sector', state: 'Himachal Pradesh' } },
-    { keywords: ['arunachal pradesh'], loc: { lat: 28.2180, lng: 94.7278, placeName: 'Arunachal Sector', state: 'Arunachal Pradesh' } },
-    { keywords: ['andhra pradesh'], loc: { lat: 15.9129, lng: 79.7400, placeName: 'Andhra Sector', state: 'Andhra Pradesh' } },
-  ];
-
-  let bestFallback: { loc: LocationInfo; index: number } | null = null;
-  for (const { keywords, loc } of pradeshFallbacks) {
+  for (const { keywords, loc } of PRADESH_FALLBACKS) {
     for (const kw of keywords) {
       const match = buildKeywordRegex(kw).exec(lower);
-      if (match && (bestFallback === null || match.index < bestFallback.index)) {
-        bestFallback = { loc, index: match.index };
+      if (match && (best === null || match.index < best.index)) {
+        best = { loc, index: match.index };
       }
     }
   }
-  if (bestFallback) return bestFallback.loc;
+
+  if (best) return best.loc;
 
   return {
     lat: 20.5937,

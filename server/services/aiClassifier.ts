@@ -6,6 +6,15 @@ import { classifyCategory, inferSeverity } from '../classifier.js';
 
 // 1. Zod Validation Schema for Gemini Structured Output
 export const AIClassificationSchema = z.object({
+  // Whether this text describes a genuine, current disaster/emergency incident an NDRF-style
+  // response force would actually care about — as opposed to political news, crime/violence
+  // unrelated to a disaster response, an obituary or celebrity health story, a military/defense
+  // exercise, sports, entertainment, a routine administrative notice (school holidays, transport
+  // schedules), or a pure weather forecast/advisory that isn't describing an already-occurring
+  // event. Defaults to true (never silently drop something on a parse hiccup) — see
+  // classifyReportsBatch's isGenuineDisaster handling for why this is the primary defense against
+  // the keyword gate's false positives (see CLAUDE.md).
+  isGenuineDisaster: z.boolean().default(true),
   category: z.enum(['flood', 'fire', 'earthquake', 'cyclone', 'building_collapse', 'medical', 'landslide']),
   severitySignal: z.enum(['critical', 'high', 'moderate', 'low']),
   confidence: z.number().min(0).max(1),
@@ -100,7 +109,9 @@ export async function classifyReportsBatch(reports: DisasterReport[]): Promise<D
     const cached = classificationCache.get(textHash);
 
     if (cached) {
-      processedReports.push(applyAIResultToReport(report, cached));
+      const applied = applyAIResultToReport(report, cached);
+      if (applied) processedReports.push(applied);
+      else console.log(`[AI Classifier] 🚫 Excluded (cached, not a genuine disaster): "${report.headline}"`);
     } else {
       unCachedReports.push({ report, hash: textHash });
     }
@@ -127,11 +138,28 @@ export async function classifyReportsBatch(reports: DisasterReport[]): Promise<D
       description: item.report.description,
     }));
 
-    const prompt = `You are an expert NDRF disaster intelligence extraction service. Classify the following disaster news items into structured JSON.
+    const prompt = `You are an expert NDRF (National Disaster Response Force) intelligence triage service. For each news item below, decide (1) whether it describes a GENUINE, CURRENT disaster/emergency incident that NDRF would actually need to monitor or respond to, and (2) if so, classify it.
+
+Set "isGenuineDisaster": true ONLY for items describing an actual, ongoing or recent disaster/emergency event in one of these categories: flood, fire, earthquake, cyclone/storm, building/structure collapse, mass-casualty medical emergency (e.g. stampede, mass poisoning, epidemic outbreak), or landslide.
+
+Set "isGenuineDisaster": false for everything else, even if it contains a word like "fire", "flood", "hospital", or "injured" — including but not limited to:
+- Political news, protests, dharnas, or statements by politicians (even about a past disaster)
+- Crime, violence, terrorism, or accidents unrelated to a natural/structural disaster (murders, shootings, trafficking, road accidents, court cases, arrests)
+- Obituaries, celebrity deaths, or health news about a specific named individual (e.g. "actor dies of age-related illness")
+- Military/defense exercises, drills, or troop movements
+- Sports, entertainment, culture, or human-interest stories
+- Routine administrative announcements (school holidays, exam schedules, transport timetables)
+- Pure weather forecasts/advisories/predictions that do NOT describe an already-occurring disaster (e.g. "IMD predicts rain tomorrow", "yellow alert issued for next week") — only mark true if the disaster is already happening or has already happened
+- Financial, economic, agricultural, or infrastructure commentary that only mentions a disaster in passing
+- Follow-up human-interest coverage once the emergency itself has clearly ended (e.g. a fundraiser, a memorial, a legal compensation ruling) — the original incident report is what should be marked true, not every downstream story about it
+
+When "isGenuineDisaster" is false, you may still fill "category"/"severitySignal" with your best guess (they will be ignored) — do not omit them.
+
 Return a JSON array containing an object for each item matching this exact schema:
 [
   {
     "id": number,
+    "isGenuineDisaster": boolean,
     "category": "flood" | "fire" | "earthquake" | "cyclone" | "building_collapse" | "medical" | "landslide",
     "severitySignal": "critical" | "high" | "moderate" | "low",
     "confidence": number between 0.0 and 1.0,
@@ -139,7 +167,7 @@ Return a JSON array containing an object for each item matching this exact schem
       "locationsMentioned": string[],
       "numericFigures": { "peopleAffected"?: number, "waterLevelMeters"?: number, "magnitude"?: number }
     },
-    "reasoning": string
+    "reasoning": string (briefly state WHY it is or isn't a genuine disaster)
   }
 ]
 
@@ -195,7 +223,9 @@ ${JSON.stringify(promptItems, null, 2)}`;
 
       if (aiData) {
         classificationCache.set(hash, aiData);
-        processedReports.push(applyAIResultToReport(report, aiData));
+        const applied = applyAIResultToReport(report, aiData);
+        if (applied) processedReports.push(applied);
+        else console.log(`[AI Classifier] 🚫 Excluded (${aiData.reasoning}): "${report.headline}"`);
       } else {
         processedReports.push(applyKeywordFallback(report));
       }
@@ -215,9 +245,16 @@ ${JSON.stringify(promptItems, null, 2)}`;
 }
 
 /**
- * Apply AI Structured Extraction to Report while keeping Rule-Based Evaluators in Command
+ * Apply AI Structured Extraction to Report while keeping Rule-Based Evaluators in Command.
+ * Returns null when Gemini determined this isn't a genuine disaster — the caller drops it
+ * entirely rather than showing it with a best-guess category (see AIClassificationSchema's
+ * isGenuineDisaster field and CLAUDE.md).
  */
-function applyAIResultToReport(report: DisasterReport, ai: AIClassificationResult): DisasterReport {
+function applyAIResultToReport(report: DisasterReport, ai: AIClassificationResult): DisasterReport | null {
+  if (!ai.isGenuineDisaster) {
+    return null;
+  }
+
   const updated = { ...report };
 
   // AI extracts category, entity numbers, and provides severity signal
@@ -226,6 +263,20 @@ function applyAIResultToReport(report: DisasterReport, ai: AIClassificationResul
 
   if (ai.extractedEntities?.numericFigures?.peopleAffected) {
     updated.affectedPopulationEstimate = ai.extractedEntities.numericFigures.peopleAffected;
+  }
+
+  // Sharpen a too-generic rule-based location (extractLocation() fell back to just the state
+  // name because its fixed dictionary doesn't know the specific city/town mentioned in the
+  // text) using Gemini's own extracted location mention, when it names something more specific
+  // than the state itself. Only placeName (used for clustering + display) is sharpened — lat/lng
+  // stay at the rule-based state-center coordinate, since we have no geocoding for an arbitrary
+  // AI-mentioned place name. This is what stops e.g. a Tarapith hotel fire from clustering
+  // together with an unrelated Kolkata hotel fire under the generic "West Bengal" placeName both
+  // fell back to — see clustering.ts's place-mismatch veto and CLAUDE.md.
+  const mention = ai.extractedEntities?.locationsMentioned?.[0]?.trim();
+  const isGenericPlace = updated.location.placeName.toLowerCase() === updated.location.state.toLowerCase();
+  if (mention && isGenericPlace && mention.toLowerCase() !== updated.location.state.toLowerCase()) {
+    updated.location = { ...updated.location, placeName: mention };
   }
 
   return updated;
