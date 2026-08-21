@@ -20,7 +20,12 @@ export async function fetchReliefWebReports(): Promise<DisasterReport[]> {
         ? new Date(item.fields.date.created).toISOString()
         : new Date().toISOString();
 
-      const category = classifyCategory(title + ' ' + body) || 'flood';
+      // Skip rather than default to 'flood' — see gdacsAdapter.ts for why forcing a category
+      // classifyCategory couldn't determine is incorrect even though aggregate.ts's downstream
+      // isStrictIndiaDisaster() re-check currently masks its effect on what users see.
+      const category = classifyCategory(title + ' ' + body);
+      if (!category) continue;
+
       const loc = extractLocation(title + ' ' + body);
 
       reports.push({

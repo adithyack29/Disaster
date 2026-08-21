@@ -10,7 +10,7 @@ import { MapPin, ShieldCheck, ChevronRight, Eye } from 'lucide-react';
 interface DisasterMapProps {
   reports: DisasterReport[];
   selectedReportId?: string | null;
-  onSelectReport?: (report: DisasterReport) => void;
+  onSelectReport: (report: DisasterReport) => void;
 }
 
 // Controller component to listen to map zoom changes and fly to selected report
@@ -72,7 +72,7 @@ export const DisasterMap: React.FC<DisasterMapProps> = ({
   selectedReportId,
   onSelectReport,
 }) => {
-  const { setSelectedIncident, filters } = useDashboardStore();
+  const { filters } = useDashboardStore();
   const [currentZoom, setCurrentZoom] = useState<number>(5);
 
   const selectedReport = reports.find((r) => r.id === selectedReportId);
@@ -158,13 +158,7 @@ export const DisasterMap: React.FC<DisasterMapProps> = ({
               position={[report.location.lat, report.location.lng]}
               icon={icon}
               eventHandlers={{
-                click: () => {
-                  if (onSelectReport) {
-                    onSelectReport(report);
-                  } else {
-                    setSelectedIncident(report.id, report.clusterId);
-                  }
-                },
+                click: () => onSelectReport(report),
               }}
             >
               <Popup>
@@ -203,13 +197,7 @@ export const DisasterMap: React.FC<DisasterMapProps> = ({
                   </div>
 
                   <button
-                    onClick={() => {
-                      if (onSelectReport) {
-                        onSelectReport(report);
-                      } else {
-                        setSelectedIncident(report.id, report.clusterId);
-                      }
-                    }}
+                    onClick={() => onSelectReport(report)}
                     className="w-full flex items-center justify-center gap-1 text-xs font-semibold text-white bg-[#1E3A5F] hover:bg-[#152a45] py-1.5 rounded transition-colors cursor-pointer font-sans-ui"
                   >
                     <span>INSPECT INCIDENT DOSSIER</span>

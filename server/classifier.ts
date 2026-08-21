@@ -48,7 +48,8 @@ const CATEGORY_KEYWORDS: Record<CategoryType, string[]> = {
   flood: [
     'flood', 'floods', 'flooding', 'flooded', 'floodwater', 'floodwaters', 'inundation',
     'waterlogging', 'waterlogged', 'submerged', 'overflow', 'overflowing', 'brahmaputra',
-    'ganga', 'yamuna', 'surge', 'deluge', 'drowning', 'drowned', 'heavy rain', 'heavy rainfall',
+    'ganga', 'yamuna', 'storm surge', 'tidal surge', 'sea surge', 'water surge', 'river surge',
+    'deluge', 'drowning', 'drowned', 'heavy rain', 'heavy rainfall',
     'rivers rise', 'danger mark', 'downpour', 'monsoon rain', 'torrents', 'dam opened',
     'sluice gates', 'inundated', 'water level', 'rain alert', 'rains', 'waterlogging in'
   ],
@@ -63,8 +64,9 @@ const CATEGORY_KEYWORDS: Record<CategoryType, string[]> = {
   ],
   cyclone: [
     'cyclone', 'cyclones', 'storm', 'storms', 'typhoon', 'typhoons', 'hurricane', 'hurricanes',
-    'landfall', 'squall', 'squalls', 'gale', 'gales', 'bay of bengal', 'depression',
-    'met forecasts', 'red alert', 'orange alert', 'imd warns', 'weather alert', 'cyclonic storm'
+    'landfall', 'squall', 'squalls', 'gale', 'gales', 'bay of bengal', 'deep depression',
+    'weather depression', 'met forecasts', 'red alert', 'orange alert', 'imd warns',
+    'weather alert', 'cyclonic storm'
   ],
   building_collapse: [
     'collapse', 'collapses', 'collapsed', 'collapsing', 'rubble', 'structural failure',
@@ -96,8 +98,14 @@ const CATEGORY_KEYWORDS: Record<CategoryType, string[]> = {
 // specific-hazard keyword AND a medical-adjacent word are present, which is the common case for
 // real disaster news — a pure medical-only story (no flood/fire/earthquake/cyclone/
 // building_collapse/landslide keyword present) still correctly falls through to 'medical'.
+// building_collapse checked before fire for the same reason: a genuine tunnel/structure collapse
+// caused by a gas explosion ("Sikkim tunnel collapse: ...tunnel collapsed following an explosion
+// suspected to be from methane gas") legitimately mentions 'explosion', a fire-category keyword,
+// as a body-text detail about the cause — but the actual event, named explicitly in the
+// headline, is a structural collapse. A pure fire/explosion story with no collapse keyword still
+// correctly matches 'fire'.
 const CATEGORY_CHECK_ORDER: CategoryType[] = [
-  'flood', 'fire', 'earthquake', 'cyclone', 'building_collapse', 'landslide', 'medical',
+  'flood', 'building_collapse', 'fire', 'earthquake', 'cyclone', 'landslide', 'medical',
 ];
 
 // Comprehensive Indian states, union territories & major hubs dictionary for location extraction
@@ -161,6 +169,94 @@ const INDIAN_LOCATIONS: { keyword: string; state: string; lat: number; lng: numb
   { keyword: 'chennai', state: 'Tamil Nadu', lat: 13.0827, lng: 80.2707 },
   { keyword: 'maharashtra', state: 'Maharashtra', lat: 19.7515, lng: 75.7139 },
   { keyword: 'mumbai', state: 'Maharashtra', lat: 18.9600, lng: 72.8300 },
+
+  // Added: roughly a third of India's states/UTs had NO entry here at all, so any report about
+  // them (a specific city/district not separately matched either) fell through to
+  // extractLocation()'s generic fallback ('Central Command Zone') — which server/db.ts's
+  // purgeInvalidClusters() then hard-deletes as junk data on every pipeline run, since that
+  // placeholder is also used for genuinely non-India/malformed records. In practice this meant
+  // real disaster reports about these states were silently vanishing from the dev database every
+  // 3-minute cycle — found via a real Bihar temple stampede story (Ashok Dham, Lakhisarai) that
+  // kept being fetched and correctly classified, but never survived to the API response.
+
+  // Bihar
+  { keyword: 'bihar', state: 'Bihar', lat: 25.0961, lng: 85.3131 },
+  { keyword: 'patna', state: 'Bihar', lat: 25.5941, lng: 85.1376 },
+  { keyword: 'lakhisarai', state: 'Bihar', lat: 25.1717, lng: 86.0958 },
+  { keyword: 'gaya', state: 'Bihar', lat: 24.7955, lng: 84.9994 },
+  { keyword: 'muzaffarpur', state: 'Bihar', lat: 26.1225, lng: 85.3906 },
+  { keyword: 'darbhanga', state: 'Bihar', lat: 26.1542, lng: 85.8918 },
+
+  // West Bengal
+  { keyword: 'west bengal', state: 'West Bengal', lat: 22.9868, lng: 87.8550 },
+  { keyword: 'kolkata', state: 'West Bengal', lat: 22.5726, lng: 88.3639 },
+  { keyword: 'darjeeling', state: 'West Bengal', lat: 27.0410, lng: 88.2663 },
+  { keyword: 'siliguri', state: 'West Bengal', lat: 26.7271, lng: 88.3953 },
+  { keyword: 'howrah', state: 'West Bengal', lat: 22.5958, lng: 88.2636 },
+
+  // Karnataka
+  { keyword: 'karnataka', state: 'Karnataka', lat: 15.3173, lng: 75.7139 },
+  { keyword: 'bengaluru', state: 'Karnataka', lat: 12.9716, lng: 77.5946 },
+  { keyword: 'bangalore', state: 'Karnataka', lat: 12.9716, lng: 77.5946 },
+  { keyword: 'mangalore', state: 'Karnataka', lat: 12.9141, lng: 74.8560 },
+
+  // Punjab & Chandigarh
+  { keyword: 'punjab', state: 'Punjab', lat: 31.1471, lng: 75.3412 },
+  { keyword: 'amritsar', state: 'Punjab', lat: 31.6340, lng: 74.8723 },
+  { keyword: 'ludhiana', state: 'Punjab', lat: 30.9010, lng: 75.8573 },
+  { keyword: 'chandigarh', state: 'Chandigarh', lat: 30.7333, lng: 76.7794 },
+
+  // Rajasthan
+  { keyword: 'rajasthan', state: 'Rajasthan', lat: 27.0238, lng: 74.2179 },
+  { keyword: 'jaipur', state: 'Rajasthan', lat: 26.9124, lng: 75.7873 },
+  { keyword: 'jodhpur', state: 'Rajasthan', lat: 26.2389, lng: 73.0243 },
+
+  // Telangana
+  { keyword: 'telangana', state: 'Telangana', lat: 18.1124, lng: 79.0193 },
+  { keyword: 'hyderabad', state: 'Telangana', lat: 17.3850, lng: 78.4867 },
+
+  // Jharkhand
+  { keyword: 'jharkhand', state: 'Jharkhand', lat: 23.6102, lng: 85.2799 },
+  { keyword: 'ranchi', state: 'Jharkhand', lat: 23.3441, lng: 85.3096 },
+  { keyword: 'jamshedpur', state: 'Jharkhand', lat: 22.8046, lng: 86.2029 },
+
+  // Chhattisgarh
+  { keyword: 'chhattisgarh', state: 'Chhattisgarh', lat: 21.2787, lng: 81.8661 },
+  { keyword: 'raipur', state: 'Chhattisgarh', lat: 21.2514, lng: 81.6296 },
+
+  // Goa
+  { keyword: 'goa', state: 'Goa', lat: 15.2993, lng: 74.1240 },
+  { keyword: 'panaji', state: 'Goa', lat: 15.4909, lng: 73.8278 },
+
+  // Remaining Northeast states
+  { keyword: 'manipur', state: 'Manipur', lat: 24.6637, lng: 93.9063 },
+  { keyword: 'imphal', state: 'Manipur', lat: 24.8170, lng: 93.9368 },
+  { keyword: 'mizoram', state: 'Mizoram', lat: 23.1645, lng: 92.9376 },
+  { keyword: 'aizawl', state: 'Mizoram', lat: 23.7271, lng: 92.7176 },
+  { keyword: 'nagaland', state: 'Nagaland', lat: 26.1584, lng: 94.5624 },
+  { keyword: 'kohima', state: 'Nagaland', lat: 25.6751, lng: 94.1086 },
+  { keyword: 'tripura', state: 'Tripura', lat: 23.9408, lng: 91.9882 },
+  { keyword: 'agartala', state: 'Tripura', lat: 23.8315, lng: 91.2868 },
+  { keyword: 'sikkim', state: 'Sikkim', lat: 27.5330, lng: 88.5122 },
+  { keyword: 'gangtok', state: 'Sikkim', lat: 27.3389, lng: 88.6065 },
+  // National-level stories that only name the Northeast region collectively ("flood management
+  // projects in Northeast India") rather than a specific state also used to fall through to the
+  // generic fallback and get purged as junk — same root cause as the missing states above.
+  { keyword: 'northeast india', state: 'Assam', lat: 26.2006, lng: 92.9376 },
+  { keyword: 'north east india', state: 'Assam', lat: 26.2006, lng: 92.9376 },
+  { keyword: 'northeastern states', state: 'Assam', lat: 26.2006, lng: 92.9376 },
+
+  // Jammu & Kashmir, Ladakh
+  { keyword: 'jammu and kashmir', state: 'Jammu and Kashmir', lat: 33.7782, lng: 76.5762 },
+  { keyword: 'jammu', state: 'Jammu and Kashmir', lat: 32.7266, lng: 74.8570 },
+  { keyword: 'kashmir', state: 'Jammu and Kashmir', lat: 34.0837, lng: 74.7973 },
+  { keyword: 'srinagar', state: 'Jammu and Kashmir', lat: 34.0837, lng: 74.7973 },
+  { keyword: 'ladakh', state: 'Ladakh', lat: 34.1526, lng: 77.5771 },
+  { keyword: 'leh', state: 'Ladakh', lat: 34.1642, lng: 77.5847 },
+
+  // Union Territories
+  { keyword: 'puducherry', state: 'Puducherry', lat: 11.9416, lng: 79.8083 },
+  { keyword: 'andaman', state: 'Andaman and Nicobar Islands', lat: 11.7401, lng: 92.6586 },
 ];
 
 /**
@@ -185,12 +281,32 @@ export function cleanText(text: string): string {
 // check) — it imports FORBIDDEN_TERMS from here rather than keeping its own copy, after the two
 // drifted out of sync once already (see CLAUDE.md Investigation Log).
 export const FORBIDDEN_TERMS = [
-  'teacher', 'assignment', 'school enrolment', 'udise+', 'student enrollment',
-  'protest', 'lathi-charge', 'lathi', 'protesters', 'assembly march', 'demonstration',
-  'cricket', 'ipl', 'bollywood', 'movie', 'actor', 'actress', 'box office',
-  'election', 'political party', 'speech', 'modi vs', 'rahul gandhi', 'bjp', 'congress',
-  'hindutva', 'ideologue', 'mcbroom', 'spider-man', 'controversy', 'land dispute', 'firing along',
-  'stock market', 'sensex', 'nifty', 'share price', 'crypto', 'iphone', 'gadget', 'smartphone',
+  // NOTE: this list used to also contain a broad set of generic non-disaster-*topic* words —
+  // 'teacher'/'assignment'/'school enrolment'/'udise+'/'student enrollment', 'protest'/
+  // 'lathi-charge'/'lathi'/'protesters'/'assembly march'/'demonstration', 'cricket'/'ipl'/
+  // 'bollywood'/'movie'/'actor'/'actress'/'box office', 'election'/'political party'/'speech'/
+  // 'modi vs'/'rahul gandhi'/'bjp'/'congress'/'hindutva'/'ideologue'/'controversy', 'stock
+  // market'/'sensex'/'nifty'/'share price'/'crypto'/'iphone'/'gadget'/'smartphone', and 'land
+  // dispute'. All removed (2026-08-17) after testing showed they were dropping real disaster
+  // reports wholesale, not just filtering unrelated content: e.g. "Assam floods: CM ... of BJP
+  // visits relief camp", "Bollywood actor donates Rs 1 crore to Kerala flood relief fund",
+  // "Cricket match postponed as Mumbai floods disrupt stadium access", "Flood victims protest
+  // against inadequate relief distribution in Bihar", "Stock market falls as Mumbai floods
+  // disrupt banking operations" — all genuine, classifyCategory-confirmed disaster headlines,
+  // all silently dropped. A politician responding to a disaster, a celebrity donating to relief,
+  // a sports event being disrupted, or disaster survivors protesting inadequate relief are all
+  // extremely common REAL disaster-news patterns in India, not signals of irrelevance. Testing
+  // also confirmed these terms added no unique protective value against the pure non-disaster
+  // stories they were presumably meant to catch (pure election/protest/cricket coverage) — those
+  // already return a null category on their own, since they don't contain any real
+  // CATEGORY_KEYWORDS term to begin with. The one real risk these blanket terms *did* guard
+  // against — English idioms that borrow a disaster word ("landslide victory", "political
+  // storm", "flood of votes") — is now guarded via the specific idiom phrases below instead,
+  // which only fire on the idiom itself, not on any mention of the topic.
+  'landslide victory', 'landslide win', 'election landslide', 'political storm',
+  'electoral storm', 'political earthquake', 'earthquake in the political',
+  'earthquake in political', 'flood of votes',
+  'mcbroom', 'spider-man', 'firing along',
   'gaza', 'israel', 'netanyahu', 'hamas', 'russia', 'ukraine', 'kharkiv', 'odesa',
   'moldova', 'florida', 'california', 'hawaii', 'naalehu', 'alaska', 'beijing', 'taiwan', 'trump', 'biden',
   'nws', 'flashfloodwarning', '#inwx', '#ffw', 'lake, in', 'porter, in', 'indiana',
@@ -282,6 +398,25 @@ export const FORBIDDEN_TERMS = [
   // not a live incident dispatch — its body text cites past disasters by name, which incidentally
   // matches a category keyword. Guarded via the specific framing phrase.
   'leading responder to natural disasters',
+  // Idiomatic figurative use of "outbreak"/"epidemic" (an "outbreak of violence/clashes/
+  // fighting" is a sudden onset of conflict, not a disease outbreak) trips the medical
+  // category's 'outbreak'/'epidemic' keywords. Guarded via the specific idiom rather than
+  // touching 'outbreak'/'epidemic' themselves, which are legitimate signals in real
+  // disease-outbreak disaster reports.
+  'outbreak of violence', 'outbreak of clashes', 'outbreak of fighting', 'epidemic of fake news',
+  // Financial/business idiom ("income from central rights collapsed" — Tata Steel Jamshedpur FC
+  // revenue reporting) trips the building_collapse category's 'collapsed' keyword the same way
+  // "storm of hype"/"landslide victory" trip other categories. Guarded via the specific
+  // financial-metric phrasing rather than touching 'collapsed' itself, which is the single most
+  // important signal in real structural-collapse disaster reports.
+  'revenue collapsed', 'income collapsed', 'earnings collapsed', 'rights collapsed',
+  'sales collapsed', 'stock collapsed', 'shares collapsed',
+  // A botany/nature feature ("Akur-chi-bhaji and the Ancient Mysteries of Ferns") mentioning
+  // that ferns "absorb the monsoon rains" trips the flood category's 'monsoon rain' keyword
+  // despite being entertainment/science content, not disaster reporting. Guarded via markers
+  // specific to this kind of plant-science feature rather than touching 'monsoon rain', which is
+  // one of the most reliable signals in real flood dispatches.
+  'chromosomes', 'spores',
 ];
 
 /**
@@ -319,10 +454,6 @@ export function isStrictIndiaDisaster(headline: string, description: string): bo
   return true;
 }
 
-export function isIndiaRelated(text: string): boolean {
-  return isStrictIndiaDisaster(text, '');
-}
-
 /**
  * Categorize headline + text into a Disaster Category
  */
@@ -349,7 +480,11 @@ export function inferSeverity(text: string): SeverityLevel {
     return 'critical';
   }
 
-  const highTerms = ['high', 'severe', 'warning', 'alert', 'disrupted', 'submerged', 'orange alert', 'waterlogging'];
+  // Bare 'high' used to inflate severity via completely unrelated mentions — "Delhi High Court
+  // dismisses flood compensation case" (a routine legal story, still a genuine disaster report
+  // overall since it mentions a real flood) got tagged HIGH severity purely because of "High
+  // Court". Narrowed to specific severity-signaling phrases instead.
+  const highTerms = ['high alert', 'high risk', 'highly affected', 'severe', 'warning', 'alert', 'disrupted', 'submerged', 'orange alert', 'waterlogging'];
   if (highTerms.some((term) => containsKeyword(lower, term))) {
     return 'high';
   }
@@ -363,27 +498,56 @@ export function inferSeverity(text: string): SeverityLevel {
 }
 
 /**
- * Match text against known Indian locations
+ * Match text against known Indian locations.
+ *
+ * Picks whichever candidate keyword occurs EARLIEST IN THE TEXT, not the first one to appear in
+ * INDIAN_LOCATIONS' declaration order. The previous array-order approach meant a headline like
+ * "Kerala geologist died in Sikkim tunnel collapse" extracted 'Kerala' (the victim's home state,
+ * incidentally listed earlier in the array) instead of 'Sikkim' (where the disaster actually
+ * happened, the real story) — because `.find()`/`.some()` over the array stops at the first
+ * *array* entry that matches, regardless of where in the text it occurs. Real-world headlines
+ * often name a secondary state (a victim's or worker's home state) alongside the actual incident
+ * location, so array order was silently picking the wrong one whenever the secondary state
+ * happened to sort earlier in this file.
  */
 export function extractLocation(text: string): LocationInfo {
   const lower = text.toLowerCase();
 
+  let best: { loc: (typeof INDIAN_LOCATIONS)[number]; index: number } | null = null;
   for (const loc of INDIAN_LOCATIONS) {
-    if (containsKeyword(lower, loc.keyword)) {
-      return {
-        lat: loc.lat,
-        lng: loc.lng,
-        placeName: loc.keyword.charAt(0).toUpperCase() + loc.keyword.slice(1),
-        state: loc.state,
-      };
+    const match = buildKeywordRegex(loc.keyword).exec(lower);
+    if (match && (best === null || match.index < best.index)) {
+      best = { loc, index: match.index };
     }
   }
+  if (best) {
+    const { loc } = best;
+    return {
+      lat: loc.lat,
+      lng: loc.lng,
+      placeName: loc.keyword.charAt(0).toUpperCase() + loc.keyword.slice(1),
+      state: loc.state,
+    };
+  }
 
-  if (containsKeyword(lower, 'madhya pradesh') || containsKeyword(lower, 'm.p.')) return { lat: 22.9734, lng: 78.6569, placeName: 'Madhya Pradesh Sector', state: 'Madhya Pradesh' };
-  if (containsKeyword(lower, 'uttar pradesh') || containsKeyword(lower, 'u.p.')) return { lat: 26.8467, lng: 80.9462, placeName: 'Uttar Pradesh Sector', state: 'Uttar Pradesh' };
-  if (containsKeyword(lower, 'himachal pradesh') || containsKeyword(lower, 'h.p.')) return { lat: 31.1048, lng: 77.1734, placeName: 'Himachal Pradesh Sector', state: 'Himachal Pradesh' };
-  if (containsKeyword(lower, 'arunachal pradesh')) return { lat: 28.2180, lng: 94.7278, placeName: 'Arunachal Sector', state: 'Arunachal Pradesh' };
-  if (containsKeyword(lower, 'andhra pradesh')) return { lat: 15.9129, lng: 79.7400, placeName: 'Andhra Sector', state: 'Andhra Pradesh' };
+  const pradeshFallbacks: { keywords: string[]; loc: LocationInfo }[] = [
+    { keywords: ['madhya pradesh', 'm.p.'], loc: { lat: 22.9734, lng: 78.6569, placeName: 'Madhya Pradesh Sector', state: 'Madhya Pradesh' } },
+    { keywords: ['uttar pradesh', 'u.p.'], loc: { lat: 26.8467, lng: 80.9462, placeName: 'Uttar Pradesh Sector', state: 'Uttar Pradesh' } },
+    { keywords: ['himachal pradesh', 'h.p.'], loc: { lat: 31.1048, lng: 77.1734, placeName: 'Himachal Pradesh Sector', state: 'Himachal Pradesh' } },
+    { keywords: ['arunachal pradesh'], loc: { lat: 28.2180, lng: 94.7278, placeName: 'Arunachal Sector', state: 'Arunachal Pradesh' } },
+    { keywords: ['andhra pradesh'], loc: { lat: 15.9129, lng: 79.7400, placeName: 'Andhra Sector', state: 'Andhra Pradesh' } },
+  ];
+
+  let bestFallback: { loc: LocationInfo; index: number } | null = null;
+  for (const { keywords, loc } of pradeshFallbacks) {
+    for (const kw of keywords) {
+      const match = buildKeywordRegex(kw).exec(lower);
+      if (match && (bestFallback === null || match.index < bestFallback.index)) {
+        bestFallback = { loc, index: match.index };
+      }
+    }
+  }
+  if (bestFallback) return bestFallback.loc;
 
   return {
     lat: 20.5937,

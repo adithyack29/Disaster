@@ -1,6 +1,6 @@
 import { insertReport, saveClusters, queryReports, purgeNonIndiaReports, purgeInvalidClusters } from './db';
 import { getFreshMockReports } from '../src/data/mockReports';
-import { extractLocation, isStrictIndiaDisaster, cleanText } from './classifier';
+import { extractLocation, isStrictIndiaDisaster, classifyCategory, cleanText } from './classifier';
 import { performSmartClustering } from '../src/lib/clustering';
 import { aggregateAndClassify } from './aggregate';
 
@@ -28,6 +28,7 @@ export async function runPipeline(): Promise<void> {
 
   // 3. Process & Purge non-disaster / foreign reports from SQLite
   const currentDB = queryReports();
+  const currentDBIds = new Set(currentDB.map((r) => r.id));
   const validIndiaIds: string[] = [];
 
   const allReportsToProcess = [...currentDB, ...classifiedFetched];
@@ -39,6 +40,26 @@ export async function runPipeline(): Promise<void> {
     // Reject if not a genuine India disaster
     if (!isStrictIndiaDisaster(report.headline, report.description)) {
       continue;
+    }
+
+    // Re-derive category for already-stored reports against the CURRENT classifier rules, not
+    // just whatever was stored when the row was first inserted. Only applies to reports read
+    // from currentDB — freshly fetched reports (classifiedFetched) already carry a fresh
+    // classification from aggregateAndClassify() this same run (possibly AI-derived via
+    // classifyReportsBatch), and re-deriving here with the plain keyword classifier would
+    // downgrade/overwrite a correct AI classification. Paired with the matching fix in
+    // db.ts's insertReport (the ON CONFLICT UPDATE SET used to silently discard a corrected
+    // category on write even if one were computed here) — without both halves of this fix, a
+    // classifier rule change never actually corrects a report that's already in the database.
+    if (currentDBIds.has(report.id)) {
+      const freshCategory = classifyCategory(`${report.headline} ${report.description}`.toLowerCase());
+      if (freshCategory && freshCategory !== report.category) {
+        report.category = freshCategory;
+        // This correction is definitionally keyword-derived, not from whatever originally
+        // classified the row (which may have been 'ai') — reflect that honestly rather than
+        // leaving a stale classificationMethod badge that overstates how this value was set.
+        report.classificationMethod = 'keyword-fallback';
+      }
     }
 
     const text = `${report.headline} ${report.description}`;

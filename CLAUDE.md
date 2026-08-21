@@ -18,9 +18,11 @@ for disaster response agencies.
 - Minimal white theme, navy accent (`#1E3A5F`), functional severity color coding (never
   decorative — always paired with a text label, never color-only), Inter for UI text, IBM Plex
   Mono for data/timestamps/numbers.
-- **AI explains, rules decide**: Gemini classifies/extracts/summarizes; severity, credibility,
-  and response-protocol decisions stay rule-based (`src/lib/severity.ts`,
-  `src/lib/actionProtocol.ts`) so the system stays explainable and auditable.
+- **AI explains, rules decide**: Gemini classifies/extracts/summarizes; severity and credibility
+  decisions stay rule-based (`src/lib/severity.ts`) so the system stays explainable and
+  auditable. (The rule-based response-protocol lookup table that used to live in
+  `src/lib/actionProtocol.ts` was removed at the user's request — a report's own
+  `actionRequired` field, when a source states one, is still shown, attributed to that source.)
 - **Never synthesize headlines** — every headline shown is real text from a real source, never
   AI-rephrased. (`src/lib/gemini.ts`'s `generateAISummary`, despite the name, is a local
   deterministic template, not an AI call — see Known Gotchas.)
@@ -68,15 +70,14 @@ app never silently blends fake data into a healthy live feed, and never blanks o
 - **Client fallback chain** (`src/data/mockApi.ts`'s `getFreshLocalReports`): backend call →
   (if unreachable) `src/data/liveClientFetcher.ts` direct browser fetch (USGS/EONET/GNews only,
   India-filtered) → (if that's also empty) local demo snapshot. Every tier is honestly labeled.
-- **Manual override**: `src/data/demoMode.ts` (`isDemoModeForced`/`setDemoModeForced`,
-  localStorage-backed) + the "Demo Mode" toggle in `TopLiveHeader.tsx`. When armed, **zero
-  network calls happen at all** for reports — deterministic, works with no connectivity. This is
-  the presenter's pre-arm switch for known-risky venue wifi; the automatic fallback above is the
-  safety net for *unexpected* failures. Toggling it must invalidate the client cache
-  (`invalidateClientCache()`) and is included in `DashboardPage.tsx`'s fetch effect deps — easy
-  to silently break by forgetting either (see Investigation Log 2026-08-16, this bit us once).
-- **UI**: `TopLiveHeader.tsx` shows `LIVE (N)` / `DEMO SNAPSHOT` / `DEMO MODE (FORCED)`, never
-  just "LIVE" unconditionally.
+- **No manual override**: there used to be a presenter-controlled "Demo Mode" toggle
+  (`src/data/demoMode.ts`, localStorage-backed, + a button in `TopLiveHeader.tsx`) that could
+  force the demo snapshot on regardless of live ingestion status. Removed at the user's request
+  (2026-08-17) — don't re-add it without being asked. The automatic fallback below (server-side
+  `mode: 'live'`/`'demo'` decision + the client fallback chain) is the only demo-safety mechanism
+  now; there is no way to force demo mode from the UI.
+- **UI**: `TopLiveHeader.tsx` shows `LIVE (N)` / `DEMO SNAPSHOT`, never just "LIVE"
+  unconditionally.
 - **Tested by actually killing the backend process** (not just simulating) — see Investigation
   Log 2026-08-16. That test also caught a real bug: `liveClientFetcher.ts`'s EONET/USGS fetchers
   weren't India-filtered, so a real outage could've shown a Colorado wildfire labeled "LIVE."
@@ -144,37 +145,42 @@ src/
   data/
     mockApi.ts               single client entry point: fetch /api/reports, derive everything
                               else client-side, demo-safety fallback chain (see above)
-    demoMode.ts                localStorage-backed forced-demo-mode flag
     liveClientFetcher.ts       last-resort direct browser fetch (USGS/EONET/GNews, India-filtered)
     mockReports.ts             the demo-safety snapshot (60 curated realistic reports) — also
                               seeded once into dev SQLite if empty
   lib/
     clustering.ts             performSmartClustering — imports FORBIDDEN_TERMS from
                               server/classifier.ts rather than keeping its own copy (see gotcha)
-    actionProtocol.ts          rule-based (category × severity) response-protocol lookup table —
-                              NOT AI-generated, keeps "AI explains, rules decide"
-    severity.ts, gemini.ts, pdfExport.ts, utils.ts
+    severity.ts, gemini.ts, utils.ts
   store/useDashboardStore.ts   Zustand: filters, selection, ingestionMode/liveCount,
-                              demoModeForced, viewMode ('cards' | 'map')
+                              viewMode ('cards' | 'map')
   pages/DashboardPage.tsx      owns data fetching, 3-min auto-refresh, view/panel composition
   components/
-    layout/    TopLiveHeader (status badge, SITREP, Demo Mode toggle, view toggle),
-               ErrorBoundary, HowThisWorks
+    layout/    TopLiveHeader (status badge, view toggle, manual reload), ErrorBoundary
     filters/   CategoryFilterBar (categories + severity + source-type + verified, one component —
                do not recreate a second filter bar, see Investigation Log 2026-08-16)
-    dashboard/ DisasterCardGrid, DisasterCard, StatsBar
+    dashboard/ DisasterCardGrid, DisasterCard
     map/       DisasterMap (lazy-loaded — see Coding Standards)
-    incident/  IncidentDetailPanel (AI brief, response protocol, PDF export, audit log),
-               MiniIncidentMap, SituationReportModal (SITREP CSV/print export)
+    incident/  IncidentDetailPanel (AI brief, response protocol, audit log), MiniIncidentMap
   types/incident.ts           canonical types: DisasterReport, IncidentCluster, FilterState, etc.
 ```
 
-**Deleted this session (confirmed unreachable from `App.tsx`'s route tree — see Investigation
-Log 2026-08-16 for the full audit):** `src/pages/IncidentDetailPage.tsx`,
+**Deleted 2026-08-16** (confirmed unreachable from `App.tsx`'s route tree — see Investigation
+Log 2026-08-16 for the full audit): `src/pages/IncidentDetailPage.tsx`,
 `src/components/layout/AppHeader.tsx`, `src/components/filters/FilterBar.tsx`,
 `src/components/feed/{LiveFeedPanel,ReportCard}.tsx`. Don't recreate equivalents — their
 functionality is fully covered by `DashboardPage`'s route-driven detail panel, `TopLiveHeader`,
 and `CategoryFilterBar`/`DisasterCardGrid` respectively.
+
+**Deleted 2026-08-21** (UI removal at user's request, then a full dead-code sweep — see
+Investigation Log 2026-08-21): `src/data/demoMode.ts` (already gone as of 2026-08-17, entry
+stale until now), `src/components/layout/HowThisWorks.tsx` (judge-facing popover, no longer
+linked from `TopLiveHeader`), `src/components/incident/SituationReportModal.tsx` +
+`src/lib/pdfExport.ts` (SITREP/CSV export and per-incident PDF download, both removed from the
+UI — no other caller), `src/components/dashboard/StatsBar.tsx` (the "Active Incidents / Critical
+Now / Reports Ingested" summary row, removed from `DashboardPage`), `src/components/dashboard/
+PulseTimeline.tsx` + `mockApi.ts`'s `getPulseTimeline()` (built but never wired into any page).
+Don't recreate any of these without being asked.
 
 ## Coding standards for this repo
 
@@ -207,21 +213,19 @@ and `CategoryFilterBar`/`DisasterCardGrid` respectively.
 - **Wrap independent page sections in `<ErrorBoundary section="...">`** (see
   `src/components/layout/ErrorBoundary.tsx`) — a malformed report/cluster crashing one section
   (map, card grid, detail panel) must never blank the whole dashboard, especially mid-demo.
-- **Code-split heavy, rarely-used features.** `DisasterMap` (Leaflet) and `pdfExport.ts` (jsPDF +
-  html2canvas, ~600KB combined) are both dynamically imported (`React.lazy` / inline
-  `await import()`) so they never load until the user actually opens the map or clicks download —
-  keeps the initial bundle lean. Follow this pattern for any future heavy, optional feature.
+- **Code-split heavy, rarely-used features.** `DisasterMap` (Leaflet, ~600KB) is dynamically
+  imported (`React.lazy`) so it never loads until the user actually opens the map view — keeps
+  the initial bundle lean. Follow this pattern for any future heavy, optional feature.
 - **Accessibility**: interactive elements need `aria-label`/`title` if icon-only; anything with
   `role="button"` needs a real `onKeyDown` (Enter/Space) handler, not just `tabIndex` — a
   `role="button"` `<article>` that only handles `onClick` is keyboard-focusable but NOT
   keyboard-operable, which is a real accessibility bug, not a nitpick (see
   `DisasterCard.tsx`'s `handleKeyDown`).
-- **Rule-based, not AI-generated, response guidance.** `src/lib/actionProtocol.ts`'s
-  `getSuggestedProtocol(category, severity)` is a fixed lookup table, deliberately not an LLM
-  call — keeps "AI explains, rules decide." It's labeled "Suggested Response Protocol... not
-  source-attributed dispatch instructions" in the UI; don't let it start looking like a real
-  agency's actual order. A report's own `actionRequired` field (when a source states one) is
-  shown separately, attributed to that source.
+- **No rule-based "suggested response protocol" lookup table.** There used to be one
+  (`src/lib/actionProtocol.ts`, a fixed category×severity table, deliberately not an LLM call) —
+  removed at the user's request. Don't re-add it without being asked. A report's own
+  `actionRequired` field (when a source states one) is still shown, attributed to that source —
+  that's the only response-guidance UI now.
 - Formatting/linting: `npm run lint` (oxlint). No test suite exists — manual/Playwright
   verification is required for UI changes, and expected to be reported as such.
 
@@ -667,3 +671,229 @@ directly into a value you already know. If a future task needs to *use* a sensit
 from outside a Vercel Function again, the admin-endpoint pattern from this entry (temporary,
 secret-protected, deleted after use) is the way to do it — don't waste time re-attempting
 `vercel env pull` first.
+
+### 2026-08-17 — Real report-volume bottleneck: a location dictionary missing a third of India's states
+User reported localhost stuck around 29-31 reports and specific real news (Bihar temple
+stampede, a West Bengal hotel fire) missing entirely despite being visibly fetched and correctly
+classified by the pipeline. Root cause, found by manually replaying `runPipeline()`'s exact
+insert/purge sequence step-by-step: `INDIAN_LOCATIONS` in `server/classifier.ts` had **no entry
+for Bihar, West Bengal, Karnataka, Punjab, Rajasthan, Telangana, Jharkhand, Chhattisgarh, Goa,
+Manipur, Mizoram, Nagaland, Tripura, Sikkim, Jammu & Kashmir, or Ladakh** — roughly a third of
+India's states/UTs. Any report about one of them (with no separately-matched city) fell through
+`extractLocation()`'s generic fallback (`placeName: 'Central Command Zone'`), which
+`server/db.ts`'s `purgeInvalidClusters()` then hard-deletes every pipeline cycle as junk data
+(that placeholder is also the signature of genuinely malformed/non-India records). So real,
+correctly-classified reports about these states were being fetched, inserted, and then silently
+deleted 3 minutes later, forever. Fixed by adding all missing states/UTs with real coordinates
+(see `INDIAN_LOCATIONS`), plus a `'northeast india'`/`'north east india'` catch-all for
+national-level stories that name the region collectively rather than a specific state. Also
+fixed in the same pass: `CATEGORY_CHECK_ORDER` had `fire` checked before `building_collapse`, so
+a genuine tunnel-collapse story mentioning an explosion as the cause ("tunnel collapsed following
+an explosion suspected to be from methane gas") got miscategorized as `fire` — reordered
+`building_collapse` before `fire` (same rationale as the existing medical-last ordering). Also:
+`classifyCategory`'s whole-word keyword lists only had singular forms for several categories
+(`flood`, `earthquake`, `landslide`, `cyclone`, `fire`), so real headlines using plurals ("Assam
+floods:", "Earthquakes rattle...") classified as `null` and were dropped, not merely
+misclassified — added the missing plurals. `mastodonAdapter.ts` was also only fetching one of
+its 5 tag timelines per run (a leftover `Math.random()` selection) instead of all 5 concurrently
+— fixed. Pushed to `main` (commit `763e080`); the `api/reports.ts` 24h→7-day accumulator-window
+widening explored earlier in the same session was explicitly rejected by the user and reverted —
+don't re-add it without being asked.
+
+### 2026-08-17 (second entry) — Demo Mode manual toggle removed at user's request
+The presenter-controlled "Demo Mode" toggle (`src/data/demoMode.ts` + the button in
+`TopLiveHeader.tsx`, localStorage-backed `isDemoModeForced`/`setDemoModeForced`) was removed —
+user asked to "remove the demo mode option," confirmed via clarifying question that this meant
+only the manual toggle, not the automatic server/client fallback that shows the curated demo
+snapshot when live ingestion genuinely fails. `demoMode.ts` deleted entirely;
+`useDashboardStore.ts`'s `demoModeForced` state/`setDemoModeForced` action,
+`DashboardPage.tsx`'s effect dependency on it, and `mockApi.ts`'s `isDemoModeForced()` checks (in
+`getFreshLocalReports`/`triggerPipelineAndRefresh`) all removed. The automatic `mode: 'live'`/
+`'demo'` fallback chain (server-side decision + `liveClientFetcher.ts` client fallback) is
+untouched and is now the *only* demo-safety mechanism — there is no way to force demo mode from
+the UI anymore. If this is ever needed again (e.g. for a future live judging demo on risky wifi),
+it will need to be rebuilt from scratch, not just re-enabled.
+
+### 2026-08-17 (third entry) — Full categorization audit: the DB-staleness bug that undermined every prior fix
+User asked for a thorough audit of anything affecting report categorization. Found a chain of
+issues, most significantly one that retroactively explains why several earlier classifier fixes
+this session didn't visibly change already-stored reports:
+
+1. **`db.ts`'s `insertReport` ON CONFLICT DO UPDATE SET excluded `category`, `placeName`,
+   `district`, `state`, `lat`, `lng`.** A report's category and location were frozen at whatever
+   they were on first insert, forever — every later pipeline run re-classifies and re-locates
+   every report in memory, but writing it back to an existing row silently discarded the
+   corrected values. Compounded by `pipeline.ts`'s loop never re-deriving `report.category` for
+   rows read from `currentDB` in the first place (only `location` was refreshed). Fixed both
+   halves: `insertReport`'s UPDATE SET now includes all six columns, and `pipeline.ts` now
+   re-runs `classifyCategory()` for DB-sourced reports specifically (never for
+   freshly-fetched ones, which already carry a fresh — possibly AI-derived — classification from
+   `aggregateAndClassify()` this same run; re-deriving those too would downgrade a correct AI
+   result to a lesser keyword-only one). Verified end-to-end: seeded a report with a
+   deliberately-stale category, confirmed a pipeline run corrected it. The equivalent bug existed
+   in production's Redis accumulator (`api/reports.ts`'s `pruneAndCap`/`mergeLiveReports` only
+   ever re-validated *whether* an accumulated report is still a valid disaster, never
+   re-classified *what category* it is) — added `refreshStaleCategories()`, applied to both the
+   Redis and in-memory-Map accumulator paths, same "skip re-deriving anything a fresh fetch this
+   pass already re-classified" rule.
+2. **Systemic over-broad `FORBIDDEN_TERMS`**: the original un-commented opening block —
+   `teacher`/`assignment`/`cricket`/`ipl`/`bollywood`/`actor`/`election`/`political party`/
+   `speech`/`modi vs`/`rahul gandhi`/`bjp`/`congress`/`hindutva`/`controversy`/`stock market`/
+   `sensex`/`gadget`/`smartphone`/`protest`/`lathi-charge`/`land dispute` etc. — was silently
+   dropping genuine disaster reports wholesale, not filtering unrelated content. Confirmed via
+   many realistic test headlines: "Assam floods: CM ... of BJP visits relief camp", "Bollywood
+   actor donates Rs 1 crore to Kerala flood relief fund", "Flood victims protest against
+   inadequate relief distribution in Bihar", "Stock market falls as Mumbai floods disrupt
+   banking operations" — all genuine, `classifyCategory`-confirmed disaster headlines, all
+   dropped. A politician responding to a disaster, a celebrity donating to relief, or disaster
+   survivors protesting inadequate relief are common REAL disaster-news patterns in India, not
+   irrelevance signals. Testing also confirmed these terms added no unique value against the
+   pure non-disaster stories they were presumably meant to catch — those already return a null
+   category on their own (no real `CATEGORY_KEYWORDS` term present). Removed the whole block;
+   replaced its one real function — guarding English idioms that borrow a disaster word
+   ("landslide victory", "political storm", "flood of votes", "political earthquake") — with
+   specific idiom-phrase guards that only fire on the idiom itself.
+3. **Cross-category keyword collisions**: bare `'depression'` (mental-health articles → wrongly
+   tagged `cyclone`), bare `'surge'` (stock-market/power-surge stories → wrongly tagged `flood`),
+   `'outbreak'`/`'epidemic'` used idiomatically ("outbreak of violence" → wrongly tagged
+   `medical`), `'collapsed'` used as a financial idiom ("income... collapsed" — a Tata Steel
+   Jamshedpur FC finance story → wrongly tagged `building_collapse`, found live on the actual
+   dashboard), and `'monsoon rain'` matching a botany/nature feature about ferns (found live on
+   the dashboard, tagged `flood`). Narrowed the meteorological keywords to specific phrases
+   (`'deep depression'`, `'storm surge'`/`'tidal surge'`/etc.) and added targeted idiom/topic
+   guards, verified both directions each time (blocks the false positive, a real disaster
+   headline using similar wording still passes).
+4. **`extractLocation()` picked the first *array-order* match, not the first *text-position*
+   match** — "Kerala geologist died in Sikkim tunnel collapse" extracted Kerala (the victim's
+   home state, incidentally listed earlier in `INDIAN_LOCATIONS`) instead of Sikkim (the actual
+   incident location). Rewrote to find whichever candidate keyword's regex match has the lowest
+   index in the actual text. Not a complete fix — a headline naming the secondary state literally
+   before the incident location in word order (as in the Kerala/Sikkim example itself) still
+   picks the earlier-mentioned state — but it now handles the far more common case (Jharkhand
+   workers example) correctly, and no longer depends on file-declaration order at all.
+5. **`CATEGORY_CHECK_ORDER`'s severity counterpart**: `inferSeverity`'s bare `'high'` term
+   inflated a routine "Delhi High Court dismisses flood compensation case" legal story to HIGH
+   severity via "High Court". Narrowed to `'high alert'`/`'high risk'`/`'highly affected'`.
+6. **Adapter-level category fallbacks**: `gdacsAdapter.ts`/`blueskyAdapter.ts`/
+   `reliefwebAdapter.ts`/`newsApiAdapter.ts`/`gnewsAdapter.ts` all defaulted to `|| 'flood'` (
+   `gdacsAdapter.ts` to `|| 'cyclone'`) when `classifyCategory` returned null, instead of
+   skipping the report — `mastodonAdapter.ts` was worst, using `(tag as any) || 'flood'`, where
+   the tag `'disaster'` isn't even a valid `CategoryType`. `eonetAdapter.ts` defaulted unmatched
+   EONET event types (Volcanoes, Drought, Snow, Sea and Lake Ice) to `'cyclone'`. In practice
+   `aggregate.ts`'s downstream `isStrictIndiaDisaster` re-check (which re-derives category from
+   the same text independently) already caught and excluded all of these before they reached a
+   user — so this had no visible effect on production, but the report objects were incorrect in
+   the meantime, relied entirely on that downstream safety net, and `mastodonAdapter.ts`'s
+   `as any` violated the project's own no-`any` standard. Fixed all six to skip (`continue`)
+   instead of guessing, matching `rssAdapter.ts`'s existing correct pattern. Also fixed
+   `gdacsAdapter.ts`/`blueskyAdapter.ts` using `Math.random()` as a report-ID fallback when
+   `guid`/`cid` was missing — non-deterministic, so the same article re-fetched twice would get
+   two different random IDs and defeat dedup entirely; switched both to `hashId()` of a stable
+   fallback string.
+7. **`aiClassifier.ts`'s AI-result merge matched reports back to Gemini's response by re-`
+   findIndex`-ing for a matching headline string**, not by array index — two reports sharing a
+   byte-identical headline (common with wire-service syndication across outlets) meant
+   `findIndex` always resolved to the *first* such report, silently assigning every later
+   duplicate-headline report the wrong report's AI classification result. Fixed to match by the
+   loop index directly (which is exactly what the prompt's per-item `id` field was set to when
+   built), removing the fragile headline re-lookup entirely.
+
+Left deliberately unfixed (documented, not silently ignored): a handful of generic `medical`
+keywords (`'ambulance'`, `'trauma'`, `'dengue'`, `'hospital'`) still false-positive on unrelated
+health-adjacent human-interest stories ("Ambulance stuck in Bengaluru traffic", "Dengue
+awareness camp held in Kolkata") — narrowing these further risks reintroducing false negatives
+on real medical-emergency disaster reports, and unlike the fixed cases these are at least
+topically health/safety-adjacent, not wrong-domain. Also left the Sikkim tunnel-collapse story's
+one sibling headline that only says "methane gas explosion" (no "collapse" word at all) tagged
+`fire` instead of `building_collapse` — a genuine content ambiguity in that specific article's
+own wording, not a classifier bug, though it does fragment that incident's cluster into two
+cards. All fixes verified via the same tsx-script-both-directions pattern used throughout this
+project, plus a full re-run of every regression test accumulated across this session (all still
+pass), `npm run build`/`npm run lint` clean, and a live end-to-end pipeline run confirming both
+the DB-staleness fix and the two live false positives (Jamshedpur FC, the fern feature) actually
+resolved on the running dashboard.
+
+### 2026-08-21 — UI removal (HowThisWorks/SITREP/StatsBar) + full-codebase dead-code sweep
+Two-part session. **Part 1** — user asked to remove specific UI pieces one at a time: the "How
+this works" popover (deleted `HowThisWorks.tsx`, its only import site in `TopLiveHeader.tsx`);
+the SITREP button/modal including its CSV export (deleted `SituationReportModal.tsx`) and,
+separately, the per-incident PDF download button in `IncidentDetailPanel` (deleted
+`pdfExport.ts` — no other caller); the "Active Incidents / Critical Now / Reports Ingested" stats
+row (deleted `StatsBar.tsx`, unwired from `DashboardPage`). Each removal included tracing every
+prop/import that only existed to feed the deleted piece (e.g. `TopLiveHeader`'s `reports`/`stats`
+props, `mockApi.ts`'s `computeStats`) rather than leaving orphaned plumbing behind.
+
+**Part 2** — user asked for a full-codebase pass to remove dead code/files and simplify without
+changing behavior. Method: cross-referenced every `export` in `src/`, `server/`, `api/` against
+the rest of the codebase (grep-based usage count, both same-file and external) to separate
+"exported but only used internally" (fine, left alone) from "referenced nowhere at all" (removed).
+Verified every removal against `npm run build` (`tsc -b` — `noUnusedLocals`/`noUnusedParameters`
+are on for `src/`, so this also catches any newly-orphaned local), `npm run lint`, a throwaway
+Vercel-mode `tsc --noEmit` check (per gotcha #8) covering `api/reports.ts` +
+`api/situation-brief.ts`, an equivalent bundler-mode check with `noUnusedLocals` enabled across
+all of `server/`+`api/` (not covered by any real tsconfig otherwise), and one live
+`npx tsx server/index.ts` run confirming `/api/reports` still serves real ingested data
+end-to-end. No browser tool was available in this environment to click through the UI directly;
+correctness relied on the type-checker catching any prop/shape mismatch from the removals below
+(a mismatch would have failed `tsc -b`, which stayed clean throughout) plus manual review of
+every touched render path.
+
+Found and removed:
+- **Fully dead files**: `PulseTimeline.tsx` component + `mockApi.ts`'s `getPulseTimeline()` (a
+  24-bucket hourly chart, built but never rendered from any page — `recharts` was installed for
+  exactly this and never actually used, uninstalled). `src/App.css`, `src/assets/{hero.png,
+  react.svg,vite.svg}` (unreferenced Vite-template leftovers), `public/icons.svg` (an unused
+  social-platform icon sprite, no `<use>` reference anywhere).
+- **Dead exports in `mockApi.ts`**: `getReports`, `getIncidentById`, `getClusterById`,
+  `computeStats`, `getStats`, `pushLiveReport` — none had any caller once `getReportsWithStatus`
+  became the sole frontend entry point (see Architecture). Removing `pushLiveReport` also let
+  `sessionPushedReports` (the module-level array only it ever wrote to) collapse into nothing —
+  simplified `getFreshLocalReports`'s merge accordingly.
+- **Dead selection-state subsystem in `useDashboardStore.ts`**: `selectedIncidentId`,
+  `selectedClusterId`, `isDetailOpen`, `liveMode`, `setSelectedIncident`, `closeDetail`,
+  `toggleLiveMode` — written to (from `DisasterMap.tsx`'s `onSelectReport` fallback branch) but
+  never read anywhere; the real incident-detail-open mechanism has been react-router's
+  `/incident/:clusterId` param (`DashboardPage`'s `activeClusterId`) all along, not this store
+  state. Since `DisasterMap` has exactly one render site (`DashboardPage`) and it always passes
+  `onSelectReport`, made that prop required and deleted the dead fallback branches rather than
+  leaving unreachable code + unused store wiring to support a caller that doesn't exist (matches
+  the project's own "don't add abstraction for a single call site" standard).
+- **Dead filter dimensions**: `FilterState.region`/`searchQuery`/`timeRange` and their
+  `setRegion`/`setSearchQuery`/`setTimeRange`/`setCategoryFilter`/`setSeverityFilter` store
+  actions — `CategoryFilterBar` (the only filter UI in the app) never exposed a search box,
+  region picker, or time-range control, so these fields could never become anything but their
+  defaults; removed the fields, the actions, and the three corresponding dead branches in
+  `mockApi.ts`'s `applyFilters`.
+- **Dead config fields**: `SeverityConfig`'s `bgSubtle`/`borderHex`/`badgeBg`/`badgeText`/
+  `description`/`priorityOrder`/`level` and `CATEGORY_CONFIG`'s `iconName` in `severity.ts` — only
+  `.color` and `.label` were ever read anywhere (icons are rendered via hardcoded switch
+  statements per component, not a string→icon lookup); every severity/category config object
+  trimmed to just the two fields actually used.
+- **Small dead helpers**: `isIndiaRelated()` in `server/classifier.ts` (an unused wrapper around
+  `isStrictIndiaDisaster`), `cn()` in `src/lib/utils.ts` (a `clsx`+`tailwind-merge` classname
+  helper with zero call sites — `clsx`/`tailwind-merge` uninstalled alongside it), unused
+  `clientId`/`clientSecret` env reads in `redditAdapter.ts` (dead — no OAuth branch actually
+  exists to use them, see gotcha/coding-standard on the Reddit OAuth path being unimplemented),
+  unused `inferSeverity` import in `usgsAdapter.ts` (severity there is derived from magnitude,
+  not text), unused `CategoryType`/`SeverityLevel` type imports in `aiClassifier.ts`.
+- **Unused npm dependencies removed**: `jspdf` (orphaned once `pdfExport.ts` was deleted),
+  `recharts`, `clsx`, `tailwind-merge` — confirmed zero references anywhere in `src`/`server`/`api`
+  before uninstalling.
+- **Cosmetic**: replaced several unused `catch (e)`/`catch (err)` bindings with bare `catch {}`
+  (`server/db.ts`, `server/index.ts`, `IncidentDetailPanel.tsx`, `mockApi.ts`) — zero behavior
+  change, just drops the now-pointless binding.
+- **Docs**: updated the directory map, "AI explains, rules decide" principle, and the dedicated
+  coding-standard bullet that all still described `src/lib/actionProtocol.ts` and
+  `src/data/demoMode.ts` as living files — both were already deleted from the working tree before
+  this session started (the former "removed at the user's request" per a comment left in
+  `IncidentDetailPanel.tsx`, the latter per the 2026-08-17 entry above) but the docs describing
+  them hadn't caught up.
+
+Deliberately left alone: exports that are used only within their own file (e.g. `ReportsPayload`
+in `api/reports.ts`, `SourceDiagnostic` in `aggregate.ts`, `AIClassificationResult` in
+`aiClassifier.ts`) — not dead, just not imported elsewhere, and stripping their `export` keyword
+would be a cosmetic-only change with no real benefit. Also left the three still-broken source
+adapters (ReliefWeb v1 decommissioned, Bluesky bot-walled, Reddit anti-bot) wired into
+`aggregate.ts` untouched — they're a known, documented, intentional state (see the 2026-08-16
+ninth entry), not dead code to prune, and removing them would be a functional/product decision
+outside the scope of "remove code nothing uses."

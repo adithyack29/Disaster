@@ -1,6 +1,7 @@
 import Parser from 'rss-parser';
-import type { DisasterReport, CategoryType } from '../../src/types/incident.js';
+import type { DisasterReport } from '../../src/types/incident.js';
 import { calculateCredibility, inferSeverity, extractLocation, classifyCategory } from '../classifier.js';
+import { hashId } from '../hashId.js';
 
 const parser = new Parser({
   headers: {
@@ -19,13 +20,21 @@ export async function fetchGDACSReports(): Promise<DisasterReport[]> {
       const content = item.contentSnippet || item.content || title;
       const pubDate = item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString();
 
-      const category: CategoryType = classifyCategory(title + ' ' + content) || 'cyclone';
+      // No fallback category: forcing an unmatched report into 'cyclone' would previously
+      // survive here even though aggregate.ts's isStrictIndiaDisaster() re-derives category from
+      // the same text independently and rejects it anyway — the fallback never actually reached
+      // a user, but it was misleading/incorrect in the meantime. Skip instead, matching
+      // rssAdapter.ts's existing pattern.
+      const category = classifyCategory(title + ' ' + content);
+      if (!category) continue;
+
       const loc = extractLocation(title + ' ' + content);
       const severity = inferSeverity(title + ' ' + content);
+      const stableId = item.guid || item.link || `${title}-${pubDate}`;
 
       reports.push({
-        id: `gdacs-${item.guid || item.link || Math.random()}`,
-        clusterId: `cluster-gdacs-${item.guid || Math.random()}`,
+        id: `gdacs-${hashId(stableId)}`,
+        clusterId: `cluster-gdacs-${hashId(stableId)}`,
         category,
         severity,
         location: loc,

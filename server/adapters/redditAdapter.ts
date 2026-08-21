@@ -3,10 +3,7 @@ import { calculateCredibility, inferSeverity, extractLocation, classifyCategory 
 
 export async function fetchRedditReports(): Promise<DisasterReport[]> {
   try {
-    const clientId = process.env.REDDIT_CLIENT_ID;
-    const clientSecret = process.env.REDDIT_CLIENT_SECRET;
-
-    let headers: Record<string, string> = {
+    const headers: Record<string, string> = {
       'User-Agent': process.env.REDDIT_USER_AGENT || 'ndrf-disaster-aggregator:v1.0 (by /u/ndrf)',
     };
 

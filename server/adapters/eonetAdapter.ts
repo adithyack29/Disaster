@@ -15,12 +15,20 @@ export async function fetchEONETReports(): Promise<DisasterReport[]> {
       const title = ev.title || 'Natural Event';
       const categories = ev.categories || [];
       const catTitle = categories[0]?.title?.toLowerCase() || '';
-      
-      let category: CategoryType = 'cyclone';
+
+      // No default fallback — EONET tracks event types this app has no category for (Volcanoes,
+      // Drought, Snow, Sea and Lake Ice, Temperature Extremes, Manmade), and defaulting those to
+      // 'cyclone' silently mislabeled them (the report's own auto-generated description even
+      // stated the real EONET category, contradicting the 'cyclone' badge). aggregate.ts's
+      // isStrictIndiaDisaster() re-check already rejected these regardless since the description
+      // text has no real category keyword, but the report object itself was wrong in the
+      // meantime. Skip explicitly instead.
+      let category: CategoryType | null = null;
       if (catTitle.includes('fire')) category = 'fire';
       else if (catTitle.includes('flood') || catTitle.includes('water')) category = 'flood';
       else if (catTitle.includes('storm') || catTitle.includes('cyclone')) category = 'cyclone';
       else if (catTitle.includes('landslide')) category = 'landslide';
+      if (!category) continue;
 
       const geometry = ev.geometry || [];
       const lastGeo = geometry[geometry.length - 1];

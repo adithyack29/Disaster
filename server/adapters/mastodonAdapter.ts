@@ -34,7 +34,14 @@ async function fetchOneTag(tag: string): Promise<DisasterReport[]> {
     const rawContent = (post.content || '').replace(/<[^>]*>?/gm, '');
     if (rawContent.trim().length < 15) continue;
 
-    const category = classifyCategory(rawContent) || (tag as any) || 'flood';
+    // Skip rather than default to the timeline's tag name (or 'flood') — the tag 'disaster'
+    // isn't even a valid CategoryType, so that fallback could construct a report with a category
+    // the rest of the app doesn't recognize. See gdacsAdapter.ts for why forcing a category
+    // classifyCategory couldn't determine is incorrect even though aggregate.ts's downstream
+    // isStrictIndiaDisaster() re-check currently masks its effect on what users see.
+    const category = classifyCategory(rawContent);
+    if (!category) continue;
+
     const loc = extractLocation(rawContent);
     const time = post.created_at ? new Date(post.created_at).toISOString() : new Date().toISOString();
     const accountName = post.account?.username ? `@${post.account.username}` : 'Mastodon User';

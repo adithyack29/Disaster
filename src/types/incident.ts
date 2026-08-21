@@ -48,9 +48,6 @@ export interface FilterState {
   severities: SeverityLevel[];
   verifiedOnly: boolean;
   recentlyReportedOnly?: boolean;
-  region: string;
-  searchQuery: string;
-  timeRange: [number, number] | null; // start and end timestamp in ms
   sourceType: 'all' | 'official' | 'news' | 'social' | 'sensor' | 'citizen';
 }
 
@@ -90,15 +87,4 @@ export interface DashboardStats {
   reportsLastHour: number;
   verifiedPercentage: number;
   monitoredSourcesCount: number;
-}
-
-export interface PulseBucket {
-  timestamp: number;
-  label: string;
-  total: number;
-  critical: number;
-  high: number;
-  moderate: number;
-  low: number;
-  dominantSeverity: SeverityLevel;
 }

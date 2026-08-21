@@ -126,7 +126,7 @@ app.post('/api/clusters/:clusterId/brief', async (req, res) => {
   try {
     const briefResult = await generateAISituationBrief(clusters[0]);
     res.json(briefResult);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'AI Brief generation failed' });
   }
 });
@@ -144,7 +144,7 @@ app.post('/api/situation-brief', async (req, res) => {
   try {
     const brief = await generateAISituationBrief(cluster);
     res.json(brief);
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: 'AI Brief generation failed' });
   }
 });
@@ -183,7 +183,7 @@ app.post('/api/pipeline/run', async (req, res) => {
   try {
     await runPipeline();
     res.json({ success: true, message: 'Pipeline ingestion run completed.' });
-  } catch (error) {
+  } catch {
     res.status(500).json({ error: 'Pipeline execution failed' });
   }
 });

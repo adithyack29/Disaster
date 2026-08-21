@@ -5,7 +5,6 @@ import { formatTimeAgo, cleanHeadline, cleanText, formatExactTime } from '../../
 import { MiniIncidentMap } from './MiniIncidentMap';
 import { generateAISummary } from '../../lib/gemini';
 import { API_BASE_URL } from '../../data/mockApi';
-import { getSuggestedProtocol } from '../../lib/actionProtocol';
 import {
   X,
   MapPin,
@@ -24,8 +23,7 @@ import {
   Zap,
   Clock,
   AlertCircle,
-  ClipboardList,
-  Download
+  ClipboardList
 } from 'lucide-react';
 
 interface IncidentDetailPanelProps {
@@ -41,25 +39,39 @@ interface BriefMeta {
   isError?: boolean;
 }
 
+const BRIEF_SECTION_HEADERS = ['SITUATION SUMMARY', 'SEVERITY & SCALE', 'RESPONSE STATUS', 'SOURCE RELIABILITY'];
+
+interface BriefSection {
+  header: string | null;
+  body: string;
+}
+
+// Splits the structured brief (see server/services/aiSituationBrief.ts) into labeled sections
+// for display. Falls back to a single unlabeled section if the text doesn't contain any of the
+// expected headers — covers a cached brief generated before this structure existed, or a Gemini
+// response that didn't follow the requested format exactly.
+function parseBriefSections(brief: string): BriefSection[] {
+  const lines = brief.split('\n');
+  const sections: BriefSection[] = [];
+  let current: BriefSection = { header: null, body: '' };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (BRIEF_SECTION_HEADERS.includes(trimmed)) {
+      if (current.header !== null || current.body.trim()) sections.push(current);
+      current = { header: trimmed, body: '' };
+    } else {
+      current.body += (current.body ? '\n' : '') + line;
+    }
+  }
+  if (current.header !== null || current.body.trim()) sections.push(current);
+
+  return sections.length > 0 ? sections : [{ header: null, body: brief }];
+}
+
 export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluster, onClose }) => {
   const [briefMeta, setBriefMeta] = useState<BriefMeta | null>(null);
   const [loadingAi, setLoadingAi] = useState<boolean>(false);
-  const [downloadingPdf, setDownloadingPdf] = useState<boolean>(false);
-
-  const handleDownloadPdf = async () => {
-    setDownloadingPdf(true);
-    try {
-      // Dynamically imported: jsPDF is a heavy dependency that only matters to the small
-      // fraction of sessions that actually export a report — keeping it out of the initial
-      // bundle matters more for first-load performance than for this rare click's latency.
-      const { generateIncidentPDF } = await import('../../lib/pdfExport');
-      generateIncidentPDF(cluster);
-    } catch (err) {
-      console.error('[IncidentDetailPanel] PDF export failed:', err);
-    } finally {
-      setDownloadingPdf(false);
-    }
-  };
 
   // Live relative time ticking timer: Re-calculates formatTimeAgo every 30 seconds
   const [, setTick] = useState(0);
@@ -96,7 +108,7 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
         });
         return;
       }
-    } catch (err) {
+    } catch {
       console.warn('[IncidentDetailPanel] Backend brief endpoint unreachable. Using client AI engine...');
     }
 
@@ -153,15 +165,6 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
           </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <button
-            onClick={handleDownloadPdf}
-            disabled={downloadingPdf}
-            className="p-1.5 rounded-md text-[#6B7280] hover:text-[#1E3A5F] hover:bg-gray-200 transition-colors cursor-pointer disabled:opacity-60"
-            title="Download incident PDF report"
-            aria-label="Download incident PDF report"
-          >
-            {downloadingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-          </button>
           <button
             onClick={onClose}
             className="p-1 rounded-md text-[#6B7280] hover:text-[#14181F] hover:bg-gray-200 transition-colors cursor-pointer"
@@ -224,31 +227,21 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
           </div>
         </div>
 
-        {/* 2.5 Response Guidance: rule-based protocol + any source-stated dispatch action */}
-        <div className="bg-[#F7F8FA] border border-[#E4E7EC] rounded-xl p-3.5 space-y-2.5 text-xs">
-          <div className="flex items-center gap-1.5 font-bold text-[#1E3A5F] uppercase tracking-wider text-[11px]">
-            <ClipboardList className="w-3.5 h-3.5 text-[#1E3A5F]" />
-            <span>Suggested Response Protocol</span>
-          </div>
-          <p className="text-[#14181F] leading-relaxed">
-            {getSuggestedProtocol(cluster.category, cluster.highestSeverity)}
-          </p>
-          <p className="text-[10px] text-[#6B7280] font-mono-data">
-            Rule-based (category × severity) — not source-attributed dispatch instructions.
-          </p>
-
-          {representativeReport?.actionRequired && (
-            <div className="pt-2 border-t border-[#E4E7EC] space-y-1">
-              <span className="text-[10px] font-bold text-[#DC2626] uppercase tracking-wider">
-                Reported Action Required
-              </span>
-              <p className="text-[#14181F] leading-relaxed">{representativeReport.actionRequired}</p>
-              <p className="text-[10px] text-[#6B7280] font-mono-data">
-                As stated by {representativeReport.source.name}
-              </p>
+        {/* 2.5 Reported Action Required: any source-stated dispatch action (attributed, not a
+            rule-based suggestion — the "Suggested Response Protocol" lookup table that used to
+            live here was removed at the user's request, see CLAUDE.md) */}
+        {representativeReport?.actionRequired && (
+          <div className="bg-[#F7F8FA] border border-[#E4E7EC] rounded-xl p-3.5 space-y-1.5 text-xs">
+            <div className="flex items-center gap-1.5 font-bold text-[#DC2626] uppercase tracking-wider text-[11px]">
+              <ClipboardList className="w-3.5 h-3.5 text-[#DC2626]" />
+              <span>Reported Action Required</span>
             </div>
-          )}
-        </div>
+            <p className="text-[#14181F] leading-relaxed">{representativeReport.actionRequired}</p>
+            <p className="text-[10px] text-[#6B7280] font-mono-data">
+              As stated by {representativeReport.source.name}
+            </p>
+          </div>
+        )}
 
         {/* 3. On-Demand AI Situation Brief Section */}
         <div className="pt-2 border-t border-[#E4E7EC]">
@@ -287,9 +280,20 @@ export const IncidentDetailPanel: React.FC<IncidentDetailPanelProps> = ({ cluste
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <p className="text-xs text-slate-200 leading-relaxed font-sans-ui whitespace-pre-line">
-                    {briefMeta.brief}
-                  </p>
+                  <div className="space-y-2.5">
+                    {parseBriefSections(briefMeta.brief).map((section, idx) => (
+                      <div key={idx}>
+                        {section.header && (
+                          <h4 className="text-[10px] font-bold uppercase tracking-wider text-amber-400/90 mb-0.5">
+                            {section.header}
+                          </h4>
+                        )}
+                        <p className="text-xs text-slate-200 leading-relaxed font-sans-ui whitespace-pre-line">
+                          {section.body.trim()}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
 
                   {/* Persistent Traceability Label (Requirement #3) */}
                   <div className="pt-2 border-t border-slate-800 text-[10px] font-mono-data text-amber-400/90 flex items-center gap-1">

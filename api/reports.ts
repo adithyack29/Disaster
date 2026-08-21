@@ -4,7 +4,7 @@ import type { DisasterReport } from '../src/types/incident.js';
 import { aggregateAndClassify, getLastSourceDiagnostics } from '../server/aggregate.js';
 import { getFreshMockReports } from '../src/data/mockReports.js';
 import { getAIClassifierDiagnostic } from '../server/services/aiClassifier.js';
-import { isStrictIndiaDisaster } from '../server/classifier.js';
+import { isStrictIndiaDisaster, classifyCategory } from '../server/classifier.js';
 
 const CACHE_TTL_MS = 2 * 60 * 1000;
 
@@ -83,6 +83,28 @@ function dedupeByIdMap(reports: DisasterReport[]): Map<string, DisasterReport> {
 // up on production hours after the fix deployed, because it had been accumulated into Redis
 // before the fix shipped and nothing ever re-validated it — see CLAUDE.md Investigation Log
 // 2026-08-16, tenth entry.
+// Re-derives `category` for already-accumulated reports that a fresh fetch this pass didn't
+// re-discover (a re-discovered report gets a fresh classification from aggregateAndClassify()
+// this same run and overwrites the stale one via dedupeByIdMap, so it doesn't need this). Real
+// India-disaster news often sits in the accumulator across multiple fetch cycles once a source
+// stops returning it (e.g. it's aged out of an RSS feed's rolling window), so without this a
+// classifier rule change (new FORBIDDEN_TERMS entry, CATEGORY_CHECK_ORDER change, a new/fixed
+// CATEGORY_KEYWORDS term) never actually corrects the category of a report that's already
+// accumulated — it just keeps whatever category the report was first classified with, forever.
+// Mirrors the equivalent fix in server/pipeline.ts for dev's SQLite. Only touches `category`
+// (a plain keyword re-derivation), not severity/credibility/etc., and only when the freshly
+// computed category differs and is non-null — never blanks out an existing category.
+function refreshStaleCategories(existing: DisasterReport[], freshlyFetchedIds: Set<string>): DisasterReport[] {
+  return existing.map((r) => {
+    if (freshlyFetchedIds.has(r.id)) return r;
+    const freshCategory = classifyCategory(`${r.headline} ${r.description}`.toLowerCase());
+    if (freshCategory && freshCategory !== r.category) {
+      return { ...r, category: freshCategory, classificationMethod: 'keyword-fallback' as const };
+    }
+    return r;
+  });
+}
+
 function pruneAndCap(reports: DisasterReport[]): DisasterReport[] {
   const cutoff = Date.now() - MAX_ACCUMULATED_AGE_MS;
   const fresh = reports.filter(
@@ -101,7 +123,9 @@ async function mergeLiveReports(freshlyFetched: DisasterReport[]): Promise<Disas
     } catch (err) {
       console.error('[api/reports] Redis read failed, continuing with an empty accumulator this pass:', err);
     }
-    const merged = pruneAndCap(Array.from(dedupeByIdMap([...existing, ...freshlyFetched]).values()));
+    const freshlyFetchedIds = new Set(freshlyFetched.map((r) => r.id));
+    const refreshedExisting = refreshStaleCategories(existing, freshlyFetchedIds);
+    const merged = pruneAndCap(Array.from(dedupeByIdMap([...refreshedExisting, ...freshlyFetched]).values()));
     try {
       await redis.set(REDIS_ACCUMULATED_KEY, merged);
     } catch (err) {
@@ -110,6 +134,14 @@ async function mergeLiveReports(freshlyFetched: DisasterReport[]): Promise<Disas
     return merged;
   }
 
+  const freshlyFetchedIds = new Set(freshlyFetched.map((r) => r.id));
+  for (const [id, report] of memoryAccumulatedLive) {
+    if (freshlyFetchedIds.has(id)) continue;
+    const freshCategory = classifyCategory(`${report.headline} ${report.description}`.toLowerCase());
+    if (freshCategory && freshCategory !== report.category) {
+      memoryAccumulatedLive.set(id, { ...report, category: freshCategory, classificationMethod: 'keyword-fallback' });
+    }
+  }
   for (const report of freshlyFetched) {
     memoryAccumulatedLive.set(report.id, report);
   }

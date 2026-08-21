@@ -1,20 +1,11 @@
 import React, { useState } from 'react';
-import { RefreshCw, ShieldAlert, Loader2, FileText, LayoutGrid, Map as MapIcon, FlaskConical } from 'lucide-react';
+import { RefreshCw, ShieldAlert, Loader2, LayoutGrid, Map as MapIcon } from 'lucide-react';
 import { useDashboardStore } from '../../store/useDashboardStore';
-import { triggerPipelineAndRefresh, invalidateClientCache } from '../../data/mockApi';
-import { SituationReportModal } from '../incident/SituationReportModal';
-import { HowThisWorks } from './HowThisWorks';
-import type { DisasterReport, DashboardStats } from '../../types/incident';
+import { triggerPipelineAndRefresh } from '../../data/mockApi';
 
-interface TopLiveHeaderProps {
-  reports: DisasterReport[];
-  stats: DashboardStats;
-}
-
-export const TopLiveHeader: React.FC<TopLiveHeaderProps> = ({ reports, stats }) => {
-  const { triggerRefresh, ingestionMode, ingestionLiveCount, demoModeForced, setDemoModeForced, viewMode, setViewMode } = useDashboardStore();
+export const TopLiveHeader: React.FC = () => {
+  const { triggerRefresh, ingestionMode, ingestionLiveCount, viewMode, setViewMode } = useDashboardStore();
   const [isReloading, setIsReloading] = useState(false);
-  const [isSitrepOpen, setIsSitrepOpen] = useState(false);
 
   const handleManualReload = async () => {
     setIsReloading(true);
@@ -29,12 +20,10 @@ export const TopLiveHeader: React.FC<TopLiveHeaderProps> = ({ reports, stats }) 
   };
 
   // Honest data-source badge: never claims "LIVE" when the demo-safety fallback is what's
-  // actually being shown (either forced by the presenter, or triggered automatically because
-  // every live source failed/returned nothing). See CLAUDE.md "Demo-safety mode".
-  const isDemo = demoModeForced || ingestionMode === 'demo';
-  const badgeLabel = demoModeForced
-    ? 'DEMO MODE (FORCED)'
-    : ingestionMode === 'demo'
+  // actually being shown (triggered automatically because every live source failed/returned
+  // nothing). See CLAUDE.md "Demo-safety mode".
+  const isDemo = ingestionMode === 'demo';
+  const badgeLabel = ingestionMode === 'demo'
     ? 'DEMO SNAPSHOT'
     : ingestionMode === 'live'
     ? `LIVE (${ingestionLiveCount})`
@@ -101,40 +90,12 @@ export const TopLiveHeader: React.FC<TopLiveHeaderProps> = ({ reports, stats }) 
           </button>
         </div>
 
-        {/* SITREP Export */}
-        <button
-          onClick={() => setIsSitrepOpen(true)}
-          title="Generate command-level situation report (print / CSV export)"
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold bg-[#F7F8FA] border border-[#E4E7EC] hover:bg-gray-100 text-[#14181F] transition-all cursor-pointer"
-        >
-          <FileText className="w-3.5 h-3.5 text-[#1E3A5F]" aria-hidden="true" />
-          <span className="hidden sm:inline">SITREP</span>
-        </button>
-
-        {/* Demo Mode Toggle — presenter pre-arm switch for judging demos, see CLAUDE.md */}
-        <button
-          onClick={() => {
-            invalidateClientCache();
-            setDemoModeForced(!demoModeForced);
-          }}
-          title={demoModeForced ? 'Demo mode is forced ON — click to return to live data' : 'Force demo-safety snapshot (no network calls) — arm before a live pitch on risky wifi'}
-          aria-pressed={demoModeForced}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border ${
-            demoModeForced
-              ? 'bg-amber-500 border-amber-600 text-white'
-              : 'bg-[#F7F8FA] border-[#E4E7EC] hover:bg-gray-100 text-[#6B7280]'
-          }`}
-        >
-          <FlaskConical className="w-3.5 h-3.5" aria-hidden="true" />
-          <span className="hidden lg:inline">Demo Mode</span>
-        </button>
-
         {/* Manual Reload Button */}
         <button
           onClick={handleManualReload}
-          disabled={isReloading || demoModeForced}
+          disabled={isReloading}
           className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold bg-[#1E3A5F] hover:bg-[#152a45] text-white shadow-2xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          title={demoModeForced ? 'Disabled while Demo Mode is forced' : 'Manual reload & re-run AI ingestion pipeline'}
+          title="Manual reload & re-run AI ingestion pipeline"
         >
           {isReloading ? (
             <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" aria-hidden="true" />
@@ -143,18 +104,7 @@ export const TopLiveHeader: React.FC<TopLiveHeaderProps> = ({ reports, stats }) 
           )}
           <span className="hidden sm:inline">{isReloading ? 'RELOADING...' : 'MANUAL RELOAD'}</span>
         </button>
-
-        <HowThisWorks />
       </div>
-
-      {isSitrepOpen && (
-        <SituationReportModal
-          isOpen={isSitrepOpen}
-          onClose={() => setIsSitrepOpen(false)}
-          reports={reports}
-          stats={stats}
-        />
-      )}
     </header>
   );
 };

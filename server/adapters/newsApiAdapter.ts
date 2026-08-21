@@ -42,7 +42,12 @@ export async function fetchNewsAPIReports(): Promise<DisasterReport[]> {
       const desc = art.description || title;
       const fullText = title + ' ' + desc;
 
-      const category = classifyCategory(fullText) || 'flood';
+      // Skip rather than default to 'flood' — see gdacsAdapter.ts for why forcing a category
+      // classifyCategory couldn't determine is incorrect even though aggregate.ts's downstream
+      // isStrictIndiaDisaster() re-check currently masks its effect on what users see.
+      const category = classifyCategory(fullText);
+      if (!category) continue;
+
       const loc = extractLocation(fullText);
       const time = art.publishedAt ? new Date(art.publishedAt).toISOString() : new Date().toISOString();
       const sourceName = art.source?.name || 'NewsAPI Source';

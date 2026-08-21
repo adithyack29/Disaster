@@ -1,48 +1,30 @@
 import { create } from 'zustand';
 import type { FilterState, CategoryType, SeverityLevel } from '../types/incident';
-import { isDemoModeForced, setDemoModeForced as persistDemoModeForced } from '../data/demoMode';
 
 interface DashboardStoreState {
   // Filter state
   filters: FilterState;
-  
-  // Selection state
-  selectedIncidentId: string | null;
-  selectedClusterId: string | null;
-  isDetailOpen: boolean;
 
-  // Live simulation mode
-  liveMode: boolean;
   lastUpdated: Date;
 
   // Data ingestion status: whether the current report set is genuinely live or the demo-safety
   // fallback snapshot, plus how many real live reports actually came through this fetch cycle.
   ingestionMode: 'live' | 'demo' | null;
   ingestionLiveCount: number;
-  demoModeForced: boolean;
 
   // Dashboard view mode: card grid (default) or full incident map
   viewMode: 'cards' | 'map';
 
   // Actions
-  setCategoryFilter: (categories: CategoryType[]) => void;
   toggleCategory: (category: CategoryType) => void;
-  setSeverityFilter: (severities: SeverityLevel[]) => void;
   toggleSeverity: (severity: SeverityLevel) => void;
   setVerifiedOnly: (verifiedOnly: boolean) => void;
-  setRegion: (region: string) => void;
-  setSearchQuery: (query: string) => void;
-  setTimeRange: (timeRange: [number, number] | null) => void;
   setSourceType: (sourceType: 'all' | 'official' | 'news' | 'social' | 'sensor' | 'citizen') => void;
   setRecentlyReportedOnly: (recentlyReportedOnly: boolean) => void;
   resetFilters: () => void;
 
-  setSelectedIncident: (id: string | null, clusterId?: string | null) => void;
-  closeDetail: () => void;
-  toggleLiveMode: () => void;
   triggerRefresh: () => void;
   setIngestionStatus: (mode: 'live' | 'demo', liveCount: number) => void;
-  setDemoModeForced: (forced: boolean) => void;
   setViewMode: (mode: 'cards' | 'map') => void;
 }
 
@@ -51,26 +33,15 @@ const DEFAULT_FILTERS: FilterState = {
   severities: [],
   verifiedOnly: false,
   recentlyReportedOnly: false,
-  region: 'all',
-  searchQuery: '',
-  timeRange: null,
   sourceType: 'all',
 };
 
 export const useDashboardStore = create<DashboardStoreState>((set) => ({
   filters: DEFAULT_FILTERS,
-  selectedIncidentId: null,
-  selectedClusterId: null,
-  isDetailOpen: false,
-  liveMode: true,
   lastUpdated: new Date(),
   ingestionMode: null,
   ingestionLiveCount: 0,
-  demoModeForced: isDemoModeForced(),
   viewMode: 'cards',
-
-  setCategoryFilter: (categories) =>
-    set((state) => ({ filters: { ...state.filters, categories } })),
 
   toggleCategory: (category) =>
     set((state) => {
@@ -80,9 +51,6 @@ export const useDashboardStore = create<DashboardStoreState>((set) => ({
         : [...state.filters.categories, category];
       return { filters: { ...state.filters, categories: newCategories } };
     }),
-
-  setSeverityFilter: (severities) =>
-    set((state) => ({ filters: { ...state.filters, severities } })),
 
   toggleSeverity: (severity) =>
     set((state) => {
@@ -96,15 +64,6 @@ export const useDashboardStore = create<DashboardStoreState>((set) => ({
   setVerifiedOnly: (verifiedOnly) =>
     set((state) => ({ filters: { ...state.filters, verifiedOnly } })),
 
-  setRegion: (region) =>
-    set((state) => ({ filters: { ...state.filters, region } })),
-
-  setSearchQuery: (searchQuery) =>
-    set((state) => ({ filters: { ...state.filters, searchQuery } })),
-
-  setTimeRange: (timeRange) =>
-    set((state) => ({ filters: { ...state.filters, timeRange } })),
-
   setSourceType: (sourceType) =>
     set((state) => ({ filters: { ...state.filters, sourceType } })),
 
@@ -113,25 +72,9 @@ export const useDashboardStore = create<DashboardStoreState>((set) => ({
 
   resetFilters: () => set({ filters: DEFAULT_FILTERS }),
 
-  setSelectedIncident: (id, clusterId = null) =>
-    set({
-      selectedIncidentId: id,
-      selectedClusterId: clusterId,
-      isDetailOpen: id !== null,
-    }),
-
-  closeDetail: () => set({ selectedIncidentId: null, isDetailOpen: false }),
-
-  toggleLiveMode: () => set((state) => ({ liveMode: !state.liveMode })),
-
   triggerRefresh: () => set({ lastUpdated: new Date() }),
 
   setIngestionStatus: (mode, liveCount) => set({ ingestionMode: mode, ingestionLiveCount: liveCount }),
-
-  setDemoModeForced: (forced) => {
-    persistDemoModeForced(forced);
-    set({ demoModeForced: forced });
-  },
 
   setViewMode: (viewMode) => set({ viewMode }),
 }));

@@ -63,19 +63,19 @@ db.exec(`
 // Safe column migrations for existing SQLite databases
 try {
   db.exec(`ALTER TABLE clusters ADD COLUMN representativeReportId TEXT;`);
-} catch (e) {
+} catch {
   // Column already exists
 }
 
 try {
   db.exec(`ALTER TABLE clusters ADD COLUMN historyJSON TEXT;`);
-} catch (e) {
+} catch {
   // Column already exists
 }
 
 try {
   db.exec(`ALTER TABLE reports ADD COLUMN classificationMethod TEXT;`);
-} catch (e) {
+} catch {
   // Column already exists
 }
 
@@ -95,13 +95,29 @@ export function insertReport(report: DisasterReport): void {
       ?, ?, ?, ?,
       ?, ?, ?, ?, ?
     ) ON CONFLICT(id) DO UPDATE SET
+      category = excluded.category,
       severity = excluded.severity,
+      placeName = excluded.placeName,
+      district = excluded.district,
+      state = excluded.state,
+      lat = excluded.lat,
+      lng = excluded.lng,
       headline = excluded.headline,
       description = excluded.description,
       credibilityScore = excluded.credibilityScore,
       timestamp = excluded.timestamp,
       classificationMethod = excluded.classificationMethod
   `);
+  // category/placeName/district/state/lat/lng used to be excluded from this UPDATE SET, so a
+  // report's category and location were frozen at whatever they were on first insert — every
+  // later pipeline run re-classifies and re-locates every report in memory (see pipeline.ts),
+  // but insertReport() was silently discarding the corrected values on write for any report
+  // that already existed in the DB. This meant a classifier/location-dictionary fix only ever
+  // visibly applied to brand-new reports; anything already stored kept its stale, possibly-wrong
+  // category/location forever, contradicting the entire "re-run the pipeline to verify" workflow
+  // used throughout this project's development. Found 2026-08-17 while auditing categorization
+  // issues. If you ever add a new column that a re-classification pass should be able to
+  // correct, make sure it's in this UPDATE SET too, not just the INSERT column list.
 
   stmt.run(
     report.id,

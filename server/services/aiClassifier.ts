@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import crypto from 'crypto';
 import { z } from 'zod';
-import type { DisasterReport, CategoryType, SeverityLevel } from '../../src/types/incident.js';
+import type { DisasterReport } from '../../src/types/incident.js';
 import { classifyCategory, inferSeverity } from '../classifier.js';
 
 // 1. Zod Validation Schema for Gemini Structured Output
@@ -183,10 +183,15 @@ ${JSON.stringify(promptItems, null, 2)}`;
       }
     }
 
-    // Merge AI results or Keyword Fallback for unCached reports
-    for (const { report, hash } of unCachedReports) {
-      const itemIndex = promptItems.findIndex((p) => p.headline === report.headline);
-      const aiData = itemIndex >= 0 ? aiResultsMap.get(promptItems[itemIndex].id) : undefined;
+    // Merge AI results or Keyword Fallback for unCached reports. Matched by array index (which
+    // is exactly what promptItems' 'id' field was set to when the prompt was built), NOT by
+    // re-searching for a matching headline — two reports can legitimately share byte-identical
+    // headlines (wire-service syndication across multiple outlets is common), and
+    // `findIndex(headline match)` always resolves to the FIRST such report, silently assigning
+    // every later duplicate-headline report the wrong report's AI classification result.
+    for (let i = 0; i < unCachedReports.length; i++) {
+      const { report, hash } = unCachedReports[i];
+      const aiData = aiResultsMap.get(i);
 
       if (aiData) {
         classificationCache.set(hash, aiData);

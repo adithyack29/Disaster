@@ -1,5 +1,5 @@
 import type { DisasterReport } from '../../src/types/incident.js';
-import { calculateCredibility, inferSeverity } from '../classifier.js';
+import { calculateCredibility } from '../classifier.js';
 
 export async function fetchUSGSReports(): Promise<DisasterReport[]> {
   try {

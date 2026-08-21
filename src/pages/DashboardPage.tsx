@@ -2,12 +2,11 @@ import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { IncidentCluster } from '../types/incident';
-import { getReportsWithStatus, triggerPipelineAndRefresh, computeStats } from '../data/mockApi';
+import { getReportsWithStatus, triggerPipelineAndRefresh } from '../data/mockApi';
 import { useDashboardStore } from '../store/useDashboardStore';
 import { TopLiveHeader } from '../components/layout/TopLiveHeader';
 import { ErrorBoundary } from '../components/layout/ErrorBoundary';
 import { CategoryFilterBar } from '../components/filters/CategoryFilterBar';
-import { StatsBar } from '../components/dashboard/StatsBar';
 import { DisasterCardGrid } from '../components/dashboard/DisasterCardGrid';
 import { IncidentDetailPanel } from '../components/incident/IncidentDetailPanel';
 import { performSmartClustering } from '../lib/clustering';
@@ -18,7 +17,7 @@ const DisasterMap = lazy(() => import('../components/map/DisasterMap').then((m) 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { clusterId: activeClusterId } = useParams<{ clusterId?: string }>();
-  const { filters, lastUpdated, triggerRefresh, viewMode, setIngestionStatus, demoModeForced } = useDashboardStore();
+  const { filters, lastUpdated, triggerRefresh, viewMode, setIngestionStatus } = useDashboardStore();
 
   const [clusters, setClusters] = useState<IncidentCluster[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -39,7 +38,7 @@ export const DashboardPage: React.FC = () => {
     return () => {
       isMounted = false;
     };
-  }, [filters, lastUpdated, demoModeForced]);
+  }, [filters, lastUpdated]);
 
   // Auto-classification & telemetry ingestion pass: Once every 3 minutes (180,000 ms)
   useEffect(() => {
@@ -110,8 +109,6 @@ export const DashboardPage: React.FC = () => {
     [filteredClusters]
   );
 
-  const stats = useMemo(() => computeStats(filteredReports), [filteredReports]);
-
   const selectedCluster = activeClusterId
     ? clusters.find((c) => c.clusterId === activeClusterId) || null
     : null;
@@ -128,15 +125,10 @@ export const DashboardPage: React.FC = () => {
     <div className="h-screen w-screen bg-[#FFFFFF] flex flex-col font-sans-ui text-[#14181F] overflow-hidden">
       {/* 1. Top Live Status Header */}
       <ErrorBoundary section="Header">
-        <TopLiveHeader reports={filteredReports} stats={stats} />
+        <TopLiveHeader />
       </ErrorBoundary>
 
-      {/* 2. At-a-glance Summary Stats */}
-      <ErrorBoundary section="Stats">
-        <StatsBar stats={stats} loading={loading} />
-      </ErrorBoundary>
-
-      {/* 3. Horizontal Category Filter Bar */}
+      {/* 2. Horizontal Category Filter Bar */}
       <ErrorBoundary section="Filters">
         <CategoryFilterBar />
       </ErrorBoundary>
